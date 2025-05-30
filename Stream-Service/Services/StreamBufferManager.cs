@@ -1,5 +1,7 @@
-﻿using Stream_Service.Models;
+﻿using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Linq;
 
 namespace Stream_Service.Services
 {
@@ -14,8 +16,8 @@ namespace Stream_Service.Services
             lock (buffers)
             {
                 buffers.Add(new StreamBuffer { StationId = stationId, Timestamp = timestamp, AudioChunk = chunk });
-                // Remove chunks older than 5 minutes
                 buffers.RemoveAll(b => b.Timestamp < DateTime.UtcNow - _bufferDuration);
+                Console.WriteLine($"Added chunk for {stationId} at {timestamp}, total chunks: {buffers.Count}");
             }
         }
 
@@ -25,11 +27,33 @@ namespace Stream_Service.Services
             {
                 lock (buffers)
                 {
-                    // Find closest chunk within 1-second tolerance
-                    return buffers.FirstOrDefault(b => Math.Abs((b.Timestamp - timestamp).TotalSeconds) < 1)?.AudioChunk;
+                    var chunk = buffers.FirstOrDefault(b => Math.Abs((b.Timestamp - timestamp).TotalSeconds) < 1);
+                    return chunk?.AudioChunk;
                 }
             }
             return null;
         }
+
+        public List<StreamBuffer> GetChunksFromTimestamp(string stationId, DateTime startTimestamp)
+        {
+            if (_buffers.TryGetValue(stationId, out var buffers))
+            {
+                lock (buffers)
+                {
+                    return buffers
+                        .Where(b => b.Timestamp >= startTimestamp)
+                        .OrderBy(b => b.Timestamp)
+                        .ToList();
+                }
+            }
+            return null;
+        }
+    }
+
+    public class StreamBuffer
+    {
+        public string StationId { get; set; }
+        public DateTime Timestamp { get; set; }
+        public byte[] AudioChunk { get; set; }
     }
 }

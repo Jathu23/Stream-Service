@@ -3,7 +3,7 @@
     public interface IFMStreamService
     {
         IAsyncEnumerable<byte[]> GetLiveStreamAsync(string stationId);
-        Task<byte[]> GetBufferedChunkAsync(string stationId, DateTime timestamp);
+        IAsyncEnumerable<byte[]> GetBufferedStreamAsync(string stationId, DateTime startTimestamp);
         Task UpdateStationAsync(string stationId, string url);
     }
 }
