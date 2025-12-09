@@ -2,12 +2,10 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Net.Http;
-using System.Threading.Channels;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
-using NAudio.Wave;
 
 namespace Stream_Service.Services
 {
@@ -16,6 +14,7 @@ namespace Stream_Service.Services
         private readonly StreamBufferManager _bufferManager;
         private readonly IConfiguration _config;
         private readonly ILogger<FMStreamService> _logger;
+        private const int MP3_BITRATE = 128000; // 128 kbps - standard MP3 bitrate
 
         public FMStreamService(StreamBufferManager bufferManager, IConfiguration config, ILogger<FMStreamService> logger)
         {
@@ -26,34 +25,97 @@ namespace Stream_Service.Services
 
         public async IAsyncEnumerable<byte[]> GetLiveStreamAsync(string stationId)
         {
-            var station = _config.GetSection("Stations").Get<List<Station>>().FirstOrDefault(s => s.Id == stationId);
-            if (station == null)
+            _logger.LogInformation("Starting live stream for {StationId}", stationId);
+
+            var chunks = _bufferManager.GetAllChunks(stationId);
+            if (chunks == null || chunks.Count == 0)
             {
-                _logger.LogError("Station {StationId} not found", stationId);
+                _logger.LogWarning("No buffered data available for {StationId}", stationId);
                 yield break;
             }
 
-            await foreach (var chunk in FetchStreamAsync(station.Url, stationId))
+            // Start streaming from the most recent chunks (last 5 seconds of buffer)
+            var startTime = DateTime.UtcNow.AddSeconds(-5);
+            var recentChunks = chunks.Where(c => c.Timestamp >= startTime).ToList();
+
+            if (recentChunks.Count == 0)
             {
-                _bufferManager.AddChunk(stationId, chunk, DateTime.UtcNow);
-                yield return chunk;
+                recentChunks = chunks.TakeLast(10).ToList(); // Fallback to last 10 chunks
+            }
+
+            _logger.LogInformation("Streaming {Count} initial chunks for {StationId}", recentChunks.Count, stationId);
+
+            // Stream initial buffered chunks
+            foreach (var chunk in recentChunks)
+            {
+                yield return chunk.Data;
+                await Task.Delay(CalculateChunkDelay(chunk.Data.Length));
+            }
+
+            // Continue streaming new chunks as they arrive
+            var lastChunkTime = recentChunks.Last().Timestamp;
+            while (true)
+            {
+                var newChunks = _bufferManager.GetChunksFrom(stationId, lastChunkTime.AddMilliseconds(1));
+
+                if (newChunks.Count > 0)
+                {
+                    foreach (var chunk in newChunks)
+                    {
+                        yield return chunk.Data;
+                        lastChunkTime = chunk.Timestamp;
+                        await Task.Delay(CalculateChunkDelay(chunk.Data.Length));
+                    }
+                }
+                else
+                {
+                    // No new chunks yet, wait a bit
+                    await Task.Delay(100);
+                }
             }
         }
 
         public async IAsyncEnumerable<byte[]> GetBufferedStreamAsync(string stationId, DateTime startTimestamp)
         {
-            var chunks = _bufferManager.GetChunksFromTimestamp(stationId, startTimestamp);
-            if (chunks == null || !chunks.Any())
+            _logger.LogInformation("Starting buffered stream for {StationId} from {StartTime}", stationId, startTimestamp);
+
+            var chunks = _bufferManager.GetChunksFrom(stationId, startTimestamp);
+            if (chunks == null || chunks.Count == 0)
             {
-                _logger.LogWarning("No chunks found for station {StationId} starting at {StartTimestamp}", stationId, startTimestamp);
+                _logger.LogWarning("No buffered data available for {StationId} from {StartTime}", stationId, startTimestamp);
                 yield break;
             }
 
+            _logger.LogInformation("Streaming {Count} buffered chunks for {StationId}", chunks.Count, stationId);
+
+            // Stream all buffered chunks from the requested time
             foreach (var chunk in chunks)
             {
-                yield return chunk.AudioChunk;
-                // Adjust delay to approximate playback speed (128kbps MP3, 64KB chunk = ~4 seconds of audio)
-                await Task.Delay(4000); // 4 seconds per 64KB chunk at 128kbps
+                yield return chunk.Data;
+                await Task.Delay(CalculateChunkDelay(chunk.Data.Length));
+            }
+
+            // Once we catch up to live, continue with live streaming
+            var lastChunkTime = chunks.Last().Timestamp;
+            _logger.LogInformation("Caught up to live stream for {StationId}, continuing with live data", stationId);
+
+            while (true)
+            {
+                var newChunks = _bufferManager.GetChunksFrom(stationId, lastChunkTime.AddMilliseconds(1));
+
+                if (newChunks.Count > 0)
+                {
+                    foreach (var chunk in newChunks)
+                    {
+                        yield return chunk.Data;
+                        lastChunkTime = chunk.Timestamp;
+                        await Task.Delay(CalculateChunkDelay(chunk.Data.Length));
+                    }
+                }
+                else
+                {
+                    await Task.Delay(100);
+                }
             }
         }
 
@@ -63,58 +125,25 @@ namespace Stream_Service.Services
             await Task.CompletedTask;
         }
 
-        private async IAsyncEnumerable<byte[]> FetchStreamAsync(string url, string stationId)
+        // Calculate appropriate delay based on chunk size and bitrate
+        // This ensures smooth playback without buffering
+        private int CalculateChunkDelay(int chunkSizeBytes)
         {
-            var channel = Channel.CreateBounded<byte[]>(new BoundedChannelOptions(100)
-            {
-                FullMode = BoundedChannelFullMode.Wait // Changed to Wait to avoid dropping chunks
-            });
+            // Calculate duration of audio in the chunk
+            // Formula: (bytes * 8 bits) / bitrate = seconds
+            var durationSeconds = (chunkSizeBytes * 8.0) / MP3_BITRATE;
+            var delayMs = (int)(durationSeconds * 1000);
 
-            _ = StreamFromUrlAsync(url, stationId, 3, channel.Writer);
-
-            await foreach (var chunk in channel.Reader.ReadAllAsync())
-            {
-                yield return chunk;
-            }
+            // Add small buffer to prevent underruns (10% extra time)
+            return (int)(delayMs * 0.9);
         }
 
-        private async Task StreamFromUrlAsync(string url, string stationId, int maxRetries, ChannelWriter<byte[]> writer)
+        public async IAsyncEnumerable<byte[]> FetchStreamAsync(string url, string stationId)
         {
-            try
-            {
-                for (int retry = 0; retry < maxRetries; retry++)
-                {
-                    try
-                    {
-                        using var client = new HttpClient();
-                        using var stream = await client.GetStreamAsync(url);
-                        using var mp3Reader = new Mp3FileReader(stream); // Reintroduced Mp3FileReader for proper MP3 handling
-
-                        var buffer = new byte[1024 * 64]; // 64KB chunks
-                        int bytesRead;
-
-                        while ((bytesRead = await mp3Reader.ReadAsync(buffer, 0, buffer.Length)) > 0)
-                        {
-                            var chunk = new byte[bytesRead];
-                            Buffer.BlockCopy(buffer, 0, chunk, 0, bytesRead);
-                            await writer.WriteAsync(chunk);
-                        }
-                        break;
-                    }
-                    catch (Exception ex)
-                    {
-                        if (retry == maxRetries - 1) throw;
-                        _logger.LogError(ex, "Error fetching stream for {StationId}, retry {Retry}", stationId, retry + 1);
-                        await Task.Delay(1000);
-                    }
-                }
-                writer.Complete();
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to fetch stream for {StationId} after {MaxRetries} retries", stationId, maxRetries);
-                writer.Complete(ex);
-            }
+            // Not implemented - handled by StreamProcessingService
+            _logger.LogWarning("FetchStreamAsync called but not implemented");
+            await Task.CompletedTask;
+            yield break;
         }
     }
 }

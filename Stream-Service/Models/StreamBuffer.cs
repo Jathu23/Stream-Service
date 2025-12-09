@@ -2,8 +2,8 @@
 {
     public class StreamBuffer
     {
-        public string StationId { get; set; }
+        public string StationId { get; set; } = string.Empty;
         public DateTime Timestamp { get; set; }
-        public byte[] AudioChunk { get; set; }
+        public byte[] AudioChunk { get; set; } = Array.Empty<byte>();
     }
 }
