@@ -4,460 +4,137 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>FM Stream Player - Time Shift Radio</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            padding: 20px;
-        }
-
-        .container {
-            background: white;
-            border-radius: 20px;
-            padding: 40px;
-            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-            max-width: 800px;
-            width: 100%;
-        }
-
-        h1 {
-            text-align: center;
-            color: #667eea;
-            margin-bottom: 10px;
-            font-size: 2.5em;
-        }
-
-        .subtitle {
-            text-align: center;
-            color: #666;
-            margin-bottom: 30px;
-            font-size: 1.1em;
-        }
-
-        .station-selector {
-            margin-bottom: 30px;
-        }
-
-        .station-buttons {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-            gap: 15px;
-            margin-bottom: 20px;
-        }
-
-        .station-btn {
-            padding: 15px 25px;
-            font-size: 16px;
-            font-weight: bold;
-            border: 2px solid #667eea;
-            background: white;
-            color: #667eea;
-            border-radius: 10px;
-            cursor: pointer;
-            transition: all 0.3s ease;
-        }
-
-        .station-btn:hover {
-            background: #667eea;
-            color: white;
-            transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.3);
-        }
-
-        .station-btn.active {
-            background: #667eea;
-            color: white;
-        }
-
-        .player-section {
-            background: #f8f9fa;
-            padding: 25px;
-            border-radius: 15px;
-            margin-bottom: 20px;
-        }
-
-        .audio-player {
-            width: 100%;
-            margin-bottom: 20px;
-        }
-
-        .controls {
-            display: flex;
-            gap: 10px;
-            flex-wrap: wrap;
-            justify-content: center;
-            margin-bottom: 20px;
-        }
-
-        .btn {
-            padding: 12px 24px;
-            font-size: 14px;
-            font-weight: 600;
-            border: none;
-            border-radius: 8px;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .btn-primary {
-            background: #667eea;
-            color: white;
-        }
-
-        .btn-primary:hover {
-            background: #5568d3;
-            transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.3);
-        }
-
-        .btn-secondary {
-            background: #6c757d;
-            color: white;
-        }
-
-        .btn-secondary:hover {
-            background: #5a6268;
-        }
-
-        .btn-success {
-            background: #28a745;
-            color: white;
-        }
-
-        .btn-success:hover {
-            background: #218838;
-        }
-
-        .rewind-controls {
-            margin-top: 20px;
-        }
-
-        .rewind-controls h3 {
-            color: #667eea;
-            margin-bottom: 15px;
-            font-size: 1.2em;
-        }
-
-        .rewind-buttons {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-            gap: 10px;
-        }
-
-        .rewind-btn {
-            padding: 10px 15px;
-            font-size: 14px;
-            background: #764ba2;
-            color: white;
-            border: none;
-            border-radius: 8px;
-            cursor: pointer;
-            transition: all 0.3s ease;
-        }
-
-        .rewind-btn:hover {
-            background: #5f3a82;
-            transform: translateY(-2px);
-        }
-
-        .status {
-            background: white;
-            padding: 20px;
-            border-radius: 10px;
-            margin-top: 20px;
-        }
-
-        .status h3 {
-            color: #667eea;
-            margin-bottom: 15px;
-        }
-
-        .status-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
-        }
-
-        .status-item {
-            padding: 12px;
-            background: #f8f9fa;
-            border-radius: 8px;
-            border-left: 4px solid #667eea;
-        }
-
-        .status-label {
-            font-size: 12px;
-            color: #666;
-            text-transform: uppercase;
-            font-weight: 600;
-            margin-bottom: 5px;
-        }
-
-        .status-value {
-            font-size: 18px;
-            color: #333;
-            font-weight: bold;
-        }
-
-        .info-box {
-            background: #e7f3ff;
-            border-left: 4px solid #2196F3;
-            padding: 15px;
-            border-radius: 8px;
-            margin-top: 20px;
-        }
-
-        .info-box h4 {
-            color: #2196F3;
-            margin-bottom: 8px;
-        }
-
-        .info-box ul {
-            margin-left: 20px;
-            color: #555;
-        }
-
-        .info-box li {
-            margin: 5px 0;
-        }
-
-        .current-playing {
-            text-align: center;
-            font-size: 1.2em;
-            color: #667eea;
-            font-weight: bold;
-            margin-bottom: 15px;
-            padding: 10px;
-            background: #f0f4ff;
-            border-radius: 8px;
-        }
-
-        @media (max-width: 600px) {
-            .container {
-                padding: 20px;
-            }
-
-            h1 {
-                font-size: 1.8em;
-            }
-
-            .station-buttons {
-                grid-template-columns: 1fr;
-            }
-        }
-    </style>
+    <link rel="stylesheet" href="/css/styles.css">
 </head>
 <body>
     <div class="container">
-        <h1>🎵 FM Stream Player</h1>
-        <p class="subtitle">Time-Shift Radio with 1 Hour Buffer</p>
+        <!-- Header -->
+        <header class="header">
+            <h1 class="title">FM Radio</h1>
+            <p class="subtitle">Time-Shift Streaming with 1 Hour Buffer</p>
+        </header>
 
-        <div class="station-selector">
-            <h3 style="color: #667eea; margin-bottom: 15px;">Select Station</h3>
-            <div class="station-buttons">
-                <button class="station-btn" data-station="mbc">MBC FM</button>
-                <button class="station-btn" data-station="lotus">Lotus FM</button>
-                <button class="station-btn" data-station="vasanthamfm">Vasantham FM</button>
-            </div>
-        </div>
+        <!-- Music Player Card -->
+        <div class="card">
+            <div class="player">
+                <!-- Album Art / Station Icon -->
+                <div class="album-art" id="albumArt">
+                    📻
+                </div>
 
-        <div class="player-section">
-            <div class="current-playing" id="currentPlaying">Select a station to start</div>
+                <!-- Audio Visualizer Canvas -->
+                <canvas id="visualizerCanvas"></canvas>
 
-            <audio id="audioPlayer" class="audio-player" controls></audio>
+                <!-- Now Playing Info -->
+                <div class="now-playing">
+                    <div class="now-playing-label">NOW PLAYING</div>
+                    <div class="now-playing-title" id="nowPlayingTitle">
+                        Select a station to start
+                    </div>
+                    <div class="now-playing-station" id="nowPlayingStation"></div>
+                </div>
 
-            <div class="controls">
-                <button class="btn btn-primary" onclick="playLive()">
-                    ▶️ Play Live
-                </button>
-                <button class="btn btn-secondary" onclick="stopStream()">
-                    ⏹️ Stop
-                </button>
-                <button class="btn btn-success" onclick="refreshStatus()">
-                    🔄 Refresh Status
-                </button>
-            </div>
+                <!-- Enhanced Seekbar -->
+                <div class="progress-container">
+                    <div class="progress-time">
+                        <div class="time-label">
+                            <span id="currentTime">0:00</span>
+                            <span id="liveIndicator" class="live-badge" style="display: none;">LIVE</span>
+                        </div>
+                        <span id="duration">--:--</span>
+                    </div>
+                    <div class="progress-bar" id="progressBar">
+                        <div class="progress-bar-bg"></div>
+                        <div class="progress-fill" id="progressFill"></div>
+                        <div class="progress-handle" id="progressHandle">
+                            <div class="progress-tooltip" id="progressTooltip">0:00</div>
+                        </div>
+                    </div>
+                </div>
 
-            <div class="rewind-controls">
-                <h3>⏪ Rewind & Time Travel</h3>
-                <div class="rewind-buttons">
-                    <button class="rewind-btn" onclick="rewind(300)">5 min ago</button>
-                    <button class="rewind-btn" onclick="rewind(600)">10 min ago</button>
-                    <button class="rewind-btn" onclick="rewind(900)">15 min ago</button>
-                    <button class="rewind-btn" onclick="rewind(1800)">30 min ago</button>
-                    <button class="rewind-btn" onclick="rewind(2700)">45 min ago</button>
-                    <button class="rewind-btn" onclick="rewind(3600)">1 hour ago</button>
+                <!-- Player Controls -->
+                <div class="controls">
+                    <button class="btn btn-secondary" onclick="previousStation()" title="Previous Station">
+                        ⏮️
+                    </button>
+                    <button class="btn btn-rewind" onclick="rewind(600)" title="Rewind 10 minutes">
+                        ⏪
+                    </button>
+                    <button class="btn btn-play" onclick="playLive()" id="playButton">
+                        ▶️
+                    </button>
+                    <button class="btn btn-rewind" onclick="skipForward()" title="Skip to Live">
+                        ⏩
+                    </button>
+                    <button class="btn btn-secondary" onclick="nextStation()" title="Next Station">
+                        ⏭️
+                    </button>
+                </div>
+
+                <!-- Volume Control (Optional) -->
+                <div class="volume-control" style="display: none;">
+                    <div class="volume-icon">🔊</div>
+                    <div class="volume-slider">
+                        <div class="volume-fill"></div>
+                    </div>
+                </div>
+
+                <!-- Time Travel Section -->
+                <div class="rewind">
+                    <h3 class="rewind-title">⏪ Time Travel</h3>
+                    <div class="rewind-grid">
+                        <button class="rewind-btn" onclick="rewind(300)">5 min ago</button>
+                        <button class="rewind-btn" onclick="rewind(600)">10 min ago</button>
+                        <button class="rewind-btn" onclick="rewind(900)">15 min ago</button>
+                        <button class="rewind-btn" onclick="rewind(1800)">30 min ago</button>
+                        <button class="rewind-btn" onclick="rewind(2700)">45 min ago</button>
+                        <button class="rewind-btn" onclick="rewind(3600)">1 hour ago</button>
+                    </div>
                 </div>
             </div>
+
+            <!-- Hidden Audio Player -->
+            <audio id="audioPlayer" controls></audio>
         </div>
 
-        <div class="status">
-            <h3>📊 Buffer Status</h3>
+        <!-- Buffer Status -->
+        <div class="card">
+            <div class="status-header">
+                <h2 class="status-title">Buffer Status</h2>
+                <div class="refresh-indicator">
+                    <span>🔄</span> Auto-refresh
+                </div>
+            </div>
             <div class="status-grid" id="statusGrid">
                 <div class="status-item">
                     <div class="status-label">Status</div>
-                    <div class="status-value">Not Connected</div>
+                    <div class="status-value">Select a station</div>
                 </div>
             </div>
         </div>
 
-        <div class="info-box">
-            <h4>ℹ️ How to Use:</h4>
-            <ul>
-                <li><strong>Select a Station:</strong> Click on one of the station buttons above</li>
-                <li><strong>Play Live:</strong> Listen to the current live broadcast</li>
-                <li><strong>Rewind:</strong> Go back in time up to 1 hour to hear what you missed!</li>
-                <li><strong>Buffer Status:</strong> Shows how much audio is available for rewind</li>
-            </ul>
+        <!-- Info Card -->
+        <div class="card">
+            <div class="info">
+                <h3 class="info-title">How to Use</h3>
+                <ul class="info-list">
+                    <li><strong>Station Controls:</strong> Use Previous/Next buttons or click station name to switch</li>
+                    <li><strong>Play Live:</strong> Click the green play button to listen to live broadcast</li>
+                    <li><strong>Time Travel:</strong> Use rewind button to go back up to 1 hour</li>
+                    <li><strong>Keyboard:</strong> Space (Play/Pause), ← → (Previous/Next), 1-3 (Stations), R (Refresh)</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- Station Selector -->
+        <div class="card">
+            <h2 class="section-title">Select Station</h2>
+            <div class="station-grid">
+                <!-- Stations will be loaded dynamically from API -->
+            </div>
         </div>
     </div>
 
-    <script>
-        // API Base URL - Uses relative path since served from same origin
-        const API_BASE = '/api/stream';
-
-        let currentStation = null;
-        const audioPlayer = document.getElementById('audioPlayer');
-        const currentPlayingDiv = document.getElementById('currentPlaying');
-
-        // Station button click handler
-        document.querySelectorAll('.station-btn').forEach(btn => {
-            btn.addEventListener('click', function() {
-                // Remove active class from all buttons
-                document.querySelectorAll('.station-btn').forEach(b => b.classList.remove('active'));
-
-                // Add active class to clicked button
-                this.classList.add('active');
-
-                // Set current station
-                currentStation = this.dataset.station;
-                currentPlayingDiv.textContent = `Selected: ${this.textContent}`;
-
-                // Auto-refresh status
-                refreshStatus();
-            });
-        });
-
-        function playLive() {
-            if (!currentStation) {
-                alert('Please select a station first!');
-                return;
-            }
-
-            const url = `${API_BASE}/live/${currentStation}`;
-            audioPlayer.src = url;
-            audioPlayer.play();
-            currentPlayingDiv.textContent = `🔴 LIVE: ${getStationName(currentStation)}`;
-            console.log('Playing live:', url);
-        }
-
-        function rewind(seconds) {
-            if (!currentStation) {
-                alert('Please select a station first!');
-                return;
-            }
-
-            const minutes = Math.floor(seconds / 60);
-            const url = `${API_BASE}/rewind/${currentStation}?seconds=${seconds}`;
-            audioPlayer.src = url;
-            audioPlayer.play();
-            currentPlayingDiv.textContent = `⏪ ${minutes} min ago: ${getStationName(currentStation)}`;
-            console.log('Rewinding:', url);
-        }
-
-        function stopStream() {
-            audioPlayer.pause();
-            audioPlayer.src = '';
-            currentPlayingDiv.textContent = currentStation ? `Selected: ${getStationName(currentStation)}` : 'Select a station to start';
-        }
-
-        async function refreshStatus() {
-            if (!currentStation) {
-                alert('Please select a station first!');
-                return;
-            }
-
-            try {
-                const response = await fetch(`${API_BASE}/status/${currentStation}`);
-                const data = await response.json();
-
-                displayStatus(data);
-            } catch (error) {
-                console.error('Error fetching status:', error);
-                document.getElementById('statusGrid').innerHTML = `
-                    <div class="status-item">
-                        <div class="status-label">Error</div>
-                        <div class="status-value" style="color: red;">Cannot connect to server</div>
-                    </div>
-                `;
-            }
-        }
-
-        function displayStatus(data) {
-            const statusHtml = `
-                <div class="status-item">
-                    <div class="status-label">Recording</div>
-                    <div class="status-value" style="color: ${data.isRecording ? '#28a745' : '#dc3545'}">
-                        ${data.isRecording ? '✓ Active' : '✗ Inactive'}
-                    </div>
-                </div>
-                <div class="status-item">
-                    <div class="status-label">Buffer Duration</div>
-                    <div class="status-value">${data.bufferDurationMinutes} min</div>
-                </div>
-                <div class="status-item">
-                    <div class="status-label">Total Data</div>
-                    <div class="status-value">${data.totalMB} MB</div>
-                </div>
-                <div class="status-item">
-                    <div class="status-label">Chunks</div>
-                    <div class="status-value">${data.chunkCount}</div>
-                </div>
-                <div class="status-item">
-                    <div class="status-label">Oldest Recording</div>
-                    <div class="status-value" style="font-size: 12px;">
-                        ${data.oldestChunkTime ? new Date(data.oldestChunkTime).toLocaleTimeString() : 'N/A'}
-                    </div>
-                </div>
-                <div class="status-item">
-                    <div class="status-label">Latest Recording</div>
-                    <div class="status-value" style="font-size: 12px;">
-                        ${data.latestChunkTime ? new Date(data.latestChunkTime).toLocaleTimeString() : 'N/A'}
-                    </div>
-                </div>
-            `;
-
-            document.getElementById('statusGrid').innerHTML = statusHtml;
-        }
-
-        function getStationName(stationId) {
-            const names = {
-                'mbc': 'MBC FM',
-                'lotus': 'Lotus FM',
-                'vasanthamfm': 'Vasantham FM'
-            };
-            return names[stationId] || stationId;
-        }
-
-        // Auto-refresh status every 10 seconds if a station is selected
-        setInterval(() => {
-            if (currentStation) {
-                refreshStatus();
-            }
-        }, 10000);
-    </script>
+    <script src="/js/app.js"></script>
 </body>
 </html>

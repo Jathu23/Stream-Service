@@ -17,12 +17,14 @@ namespace Stream_Service.Controllers
         private readonly IFMStreamService _streamService;
         private readonly StreamBufferManager _bufferManager;
         private readonly ILogger<StreamController> _logger;
+        private readonly IConfiguration _configuration;
 
-        public StreamController(IFMStreamService streamService, StreamBufferManager bufferManager, ILogger<StreamController> logger)
+        public StreamController(IFMStreamService streamService, StreamBufferManager bufferManager, ILogger<StreamController> logger, IConfiguration configuration)
         {
             _streamService = streamService;
             _bufferManager = bufferManager;
             _logger = logger;
+            _configuration = configuration;
         }
 
         /// <summary>
@@ -101,6 +103,25 @@ namespace Stream_Service.Controllers
             {
                 _logger.LogError(ex, "Error streaming buffered audio for {StationId}", stationId);
             }
+        }
+
+        /// <summary>
+        /// Get all available stations
+        /// </summary>
+        /// <returns>List of all configured stations with their details</returns>
+        /// <response code="200">Returns the list of stations</response>
+        [HttpGet("stations")]
+        [ProducesResponseType(typeof(Station[]), StatusCodes.Status200OK)]
+        public IActionResult GetStations()
+        {
+            var stations = _configuration.GetSection("Stations").Get<List<Station>>() ?? new List<Station>();
+            return Ok(stations.Where(s => s.IsActive).Select(s => new
+            {
+                s.Id,
+                s.Name,
+                s.Icon,
+                s.Gradient
+            }));
         }
 
         /// <summary>

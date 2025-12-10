@@ -1,0 +1,897 @@
+/**
+ * FM Stream Player - Spotify-Style MP3 Player
+ * Modern UI with Album Art and Progress Bar
+ */
+
+// Configuration
+const CONFIG = {
+    API_BASE: '/api/stream',
+    AUTO_REFRESH: 10000,
+    STATIONS: {} // Will be loaded dynamically from API
+};
+
+// State
+const state = {
+    currentStation: null,
+    isPlaying: false,
+    refreshTimer: null,
+    progressTimer: null,
+    bufferDuration: 0,
+    currentTime: 0,
+    seekPosition: 0,
+    isDragging: false,
+    isLive: true,
+    playbackStartTime: null
+};
+
+// DOM Elements
+const elements = {
+    audio: null,
+    albumArt: null,
+    nowPlaying: null,
+    nowPlayingStation: null,
+    playButton: null,
+    currentTime: null,
+    duration: null,
+    progressBar: null,
+    progressFill: null,
+    progressHandle: null,
+    progressTooltip: null,
+    liveIndicator: null,
+    statusGrid: null,
+    stationBtns: null,
+    canvas: null,
+    canvasCtx: null
+};
+
+// Web Audio API
+let audioContext = null;
+let analyser = null;
+let source = null;
+let dataArray = null;
+let bufferLength = 0;
+let animationId = null;
+
+// Initialize
+document.addEventListener('DOMContentLoaded', async () => {
+    elements.audio = document.getElementById('audioPlayer');
+    elements.albumArt = document.getElementById('albumArt');
+    elements.nowPlaying = document.getElementById('nowPlayingTitle');
+    elements.nowPlayingStation = document.getElementById('nowPlayingStation');
+    elements.playButton = document.getElementById('playButton');
+    elements.currentTime = document.getElementById('currentTime');
+    elements.duration = document.getElementById('duration');
+    elements.progressBar = document.getElementById('progressBar');
+    elements.progressFill = document.getElementById('progressFill');
+    elements.progressHandle = document.getElementById('progressHandle');
+    elements.progressTooltip = document.getElementById('progressTooltip');
+    elements.liveIndicator = document.getElementById('liveIndicator');
+    elements.statusGrid = document.getElementById('statusGrid');
+    elements.canvas = document.getElementById('visualizerCanvas');
+    elements.canvasCtx = elements.canvas.getContext('2d');
+
+    // Set canvas size dynamically based on screen size
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
+
+    // Note: Audio context will be initialized on first play (browser requirement)
+
+    // Load stations from API
+    await loadStations();
+
+    setupListeners();
+    setupSeekbar();
+
+    // Auto-select first station by default
+    const firstStationId = Object.keys(CONFIG.STATIONS)[0];
+    if (firstStationId) {
+        selectStation(firstStationId);
+    }
+
+    console.log('🎵 FM Stream Player ready');
+});
+
+// Load stations from API
+async function loadStations() {
+    try {
+        const response = await fetch(`${CONFIG.API_BASE}/stations`);
+        if (!response.ok) throw new Error('Failed to load stations');
+
+        const stations = await response.json();
+
+        // Convert array to object for easy lookup
+        stations.forEach(station => {
+            CONFIG.STATIONS[station.id] = {
+                name: station.name,
+                icon: station.icon,
+                gradient: station.gradient
+            };
+        });
+
+        // Render station buttons
+        renderStationButtons(stations);
+
+        console.log('📡 Loaded stations:', Object.keys(CONFIG.STATIONS));
+    } catch (error) {
+        console.error('Error loading stations:', error);
+        alert('Failed to load stations. Please refresh the page.');
+    }
+}
+
+// Render station buttons dynamically
+function renderStationButtons(stations) {
+    const stationGrid = document.querySelector('.station-grid');
+    if (!stationGrid) return;
+
+    stationGrid.innerHTML = stations.map(station => `
+        <button class="station-btn" data-station="${station.id}">
+            <div class="station-icon">${station.icon}</div>
+            <div>${station.name}</div>
+        </button>
+    `).join('');
+
+    // Setup event listeners for station buttons
+    elements.stationBtns = document.querySelectorAll('.station-btn');
+    elements.stationBtns.forEach(btn => {
+        btn.addEventListener('click', () => selectStation(btn.dataset.station));
+    });
+}
+
+function setupListeners() {
+    // Audio events
+    elements.audio.addEventListener('play', () => {
+        state.isPlaying = true;
+        startProgressAnimation();
+        startVisualizer();
+    });
+
+    elements.audio.addEventListener('pause', () => {
+        state.isPlaying = false;
+        stopProgressAnimation();
+        stopVisualizer();
+    });
+
+    elements.audio.addEventListener('error', (e) => {
+        console.error('Audio error:', e);
+        alert('Playback error occurred');
+    });
+
+    // Keyboard shortcuts
+    document.addEventListener('keydown', (e) => {
+        if (e.code === 'Space' && state.currentStation) {
+            e.preventDefault();
+            state.isPlaying ? pauseStream() : playLive();
+        }
+
+        // Dynamic keyboard shortcuts based on loaded stations
+        const stationIds = Object.keys(CONFIG.STATIONS);
+        if (e.code === 'Digit1' && stationIds[0]) selectStation(stationIds[0]);
+        if (e.code === 'Digit2' && stationIds[1]) selectStation(stationIds[1]);
+        if (e.code === 'Digit3' && stationIds[2]) selectStation(stationIds[2]);
+
+        // Previous/Next station shortcuts
+        if (e.code === 'ArrowLeft' && state.currentStation) {
+            e.preventDefault();
+            previousStation();
+        }
+        if (e.code === 'ArrowRight' && state.currentStation) {
+            e.preventDefault();
+            nextStation();
+        }
+
+        if (e.code === 'KeyR' && state.currentStation) refreshStatus();
+    });
+}
+
+// Station Management
+function selectStation(stationId) {
+    if (!CONFIG.STATIONS[stationId]) return;
+
+    state.currentStation = stationId;
+    const station = CONFIG.STATIONS[stationId];
+
+    // Update station buttons
+    elements.stationBtns.forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.station === stationId);
+    });
+
+    // Update album art
+    elements.albumArt.textContent = station.icon;
+    elements.albumArt.style.background = station.gradient;
+
+    // Update now playing
+    elements.nowPlaying.textContent = station.name;
+    elements.nowPlayingStation.textContent = 'Ready to play';
+
+    // Refresh status
+    refreshStatus();
+    startAutoRefresh();
+
+    console.log('📡 Selected:', station.name);
+}
+
+// Previous station
+function previousStation() {
+    const stationIds = Object.keys(CONFIG.STATIONS);
+    if (stationIds.length === 0) return;
+
+    const currentIndex = stationIds.indexOf(state.currentStation);
+    const previousIndex = currentIndex <= 0 ? stationIds.length - 1 : currentIndex - 1;
+
+    selectStation(stationIds[previousIndex]);
+
+    // If currently playing, start playing the new station
+    if (state.isPlaying) {
+        playLive();
+    }
+}
+
+// Next station
+function nextStation() {
+    const stationIds = Object.keys(CONFIG.STATIONS);
+    if (stationIds.length === 0) return;
+
+    const currentIndex = stationIds.indexOf(state.currentStation);
+    const nextIndex = currentIndex >= stationIds.length - 1 ? 0 : currentIndex + 1;
+
+    selectStation(stationIds[nextIndex]);
+
+    // If currently playing, start playing the new station
+    if (state.isPlaying) {
+        playLive();
+    }
+}
+
+// Playback Controls
+function playLive() {
+    if (!state.currentStation) {
+        alert('Please select a station first!');
+        return;
+    }
+
+    const station = CONFIG.STATIONS[state.currentStation];
+    const url = `${CONFIG.API_BASE}/live/${state.currentStation}`;
+
+    // Initialize audio context on first play (required by browsers)
+    if (!audioContext) {
+        initAudioContext();
+    }
+
+    // Reset to live mode
+    state.isLive = true;
+    state.currentTime = state.bufferDuration;
+    state.playbackStartTime = Date.now();
+
+    elements.audio.src = url;
+    elements.audio.play()
+        .then(() => {
+            // Update play button
+            elements.playButton.textContent = '⏸️';
+            elements.playButton.onclick = pauseStream;
+
+            // Update now playing
+            elements.nowPlaying.textContent = station.name;
+            elements.nowPlayingStation.innerHTML = '🔴 LIVE <span class="playing-animation"><span></span><span></span><span></span></span>';
+
+            // Show live indicator
+            if (elements.liveIndicator) {
+                elements.liveIndicator.style.display = 'inline-block';
+            }
+
+            console.log('▶️ Playing:', url);
+        })
+        .catch(err => {
+            console.error('Play error:', err);
+            alert('Failed to play stream');
+        });
+}
+
+function pauseStream() {
+    elements.audio.pause();
+    state.isPlaying = false;
+
+    // Update play button
+    elements.playButton.textContent = '▶️';
+    elements.playButton.onclick = playLive;
+
+    elements.nowPlayingStation.textContent = 'Paused';
+}
+
+function skipForward() {
+    if (!state.currentStation) {
+        alert('Please select a station first!');
+        return;
+    }
+    // Skip forward means go back to live
+    playLive();
+}
+
+function rewind(seconds) {
+    if (!state.currentStation) {
+        alert('Please select a station first!');
+        return;
+    }
+
+    const station = CONFIG.STATIONS[state.currentStation];
+    const minutes = Math.floor(seconds / 60);
+    const url = `${CONFIG.API_BASE}/rewind/${state.currentStation}?seconds=${seconds}`;
+
+    elements.audio.src = url;
+    elements.audio.play()
+        .then(() => {
+            // Update play button
+            elements.playButton.textContent = '⏸️';
+            elements.playButton.onclick = pauseStream;
+
+            // Update now playing
+            elements.nowPlaying.textContent = station.name;
+            elements.nowPlayingStation.innerHTML = `⏪ ${minutes} min ago <span class="playing-animation"><span></span><span></span><span></span></span>`;
+
+            console.log('⏪ Rewinding:', url);
+        })
+        .catch(err => {
+            console.error('Rewind error:', err);
+            alert('Failed to rewind');
+        });
+}
+
+function stopStream() {
+    elements.audio.pause();
+    elements.audio.src = '';
+    state.isPlaying = false;
+
+    // Update play button
+    elements.playButton.textContent = '▶️';
+    elements.playButton.onclick = playLive;
+
+    // Update UI
+    if (state.currentStation) {
+        const station = CONFIG.STATIONS[state.currentStation];
+        elements.nowPlaying.textContent = station.name;
+        elements.nowPlayingStation.textContent = 'Stopped';
+    } else {
+        elements.nowPlaying.textContent = 'Select a station to start';
+        elements.nowPlayingStation.textContent = '';
+    }
+
+    // Reset progress
+    elements.currentTime.textContent = '0:00';
+    elements.progressFill.style.width = '0%';
+    stopProgressAnimation();
+
+    console.log('⏹️ Stopped');
+}
+
+// Progress Bar Animation
+function startProgressAnimation() {
+    if (state.progressTimer) clearInterval(state.progressTimer);
+
+    state.progressTimer = setInterval(() => {
+        if (!state.isPlaying) {
+            clearInterval(state.progressTimer);
+            return;
+        }
+
+        updateSeekbarPosition();
+    }, 1000);
+}
+
+function stopProgressAnimation() {
+    if (state.progressTimer) {
+        clearInterval(state.progressTimer);
+        state.progressTimer = null;
+    }
+}
+
+function updateDuration() {
+    if (state.bufferDuration > 0) {
+        const minutes = Math.floor(state.bufferDuration / 60);
+        const seconds = Math.floor(state.bufferDuration % 60);
+        elements.duration.textContent = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+
+        // Update seekbar max position
+        if (elements.progressBar) {
+            elements.progressBar.setAttribute('data-duration', state.bufferDuration);
+        }
+    } else {
+        elements.duration.textContent = '--:--';
+    }
+}
+
+// Status Management
+async function refreshStatus() {
+    if (!state.currentStation) {
+        alert('Please select a station first!');
+        return;
+    }
+
+    try {
+        showLoading();
+
+        const response = await fetch(`${CONFIG.API_BASE}/status/${state.currentStation}`);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+        const data = await response.json();
+
+        // Store buffer duration
+        if (data.bufferDurationMinutes) {
+            state.bufferDuration = data.bufferDurationMinutes * 60;
+            updateDuration();
+        }
+
+        displayStatus(data);
+        console.log('📊 Status refreshed');
+
+    } catch (error) {
+        console.error('Status error:', error);
+        showError(error.message);
+    }
+}
+
+function displayStatus(data) {
+    const html = `
+        <div class="status-item">
+            <div class="status-label">Recording</div>
+            <div class="status-value">
+                ${data.isRecording ? '✓ Active' : '✗ Inactive'}
+            </div>
+        </div>
+        <div class="status-item">
+            <div class="status-label">Buffer Duration</div>
+            <div class="status-value">${data.bufferDurationMinutes || 0} min</div>
+        </div>
+        <div class="status-item">
+            <div class="status-label">Total Data</div>
+            <div class="status-value">${data.totalMB || 0} MB</div>
+        </div>
+        <div class="status-item">
+            <div class="status-label">Chunks</div>
+            <div class="status-value">${data.chunkCount || 0}</div>
+        </div>
+        <div class="status-item">
+            <div class="status-label">Oldest</div>
+            <div class="status-value" style="font-size: 0.95rem;">
+                ${data.oldestChunkTime ? formatTime(data.oldestChunkTime) : 'N/A'}
+            </div>
+        </div>
+        <div class="status-item">
+            <div class="status-label">Latest</div>
+            <div class="status-value" style="font-size: 0.95rem;">
+                ${data.latestChunkTime ? formatTime(data.latestChunkTime) : 'N/A'}
+            </div>
+        </div>
+    `;
+
+    elements.statusGrid.innerHTML = html;
+}
+
+function showLoading() {
+    elements.statusGrid.innerHTML = `
+        <div class="status-item">
+            <div class="status-label">Status</div>
+            <div class="status-value">🔄 Loading...</div>
+        </div>
+    `;
+}
+
+function showError(msg) {
+    elements.statusGrid.innerHTML = `
+        <div class="status-item">
+            <div class="status-label">Error</div>
+            <div class="status-value">✗ ${msg || 'Cannot connect'}</div>
+        </div>
+    `;
+}
+
+// Auto-Refresh
+function startAutoRefresh() {
+    if (state.refreshTimer) clearInterval(state.refreshTimer);
+
+    state.refreshTimer = setInterval(() => {
+        if (state.currentStation) refreshStatus();
+    }, CONFIG.AUTO_REFRESH);
+
+    console.log('🔄 Auto-refresh started');
+}
+
+// Web Audio API Initialization
+function initAudioContext() {
+    if (audioContext) return; // Already initialized
+
+    try {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        analyser = audioContext.createAnalyser();
+        analyser.fftSize = 256; // Higher = more detail, lower = better performance
+        analyser.smoothingTimeConstant = 0.8; // Smooth transitions
+        bufferLength = analyser.frequencyBinCount;
+        dataArray = new Uint8Array(bufferLength);
+
+        // Connect audio element to analyser
+        source = audioContext.createMediaElementSource(elements.audio);
+        source.connect(analyser);
+        analyser.connect(audioContext.destination);
+
+        console.log('✅ Web Audio API initialized with real-time frequency analysis');
+    } catch (error) {
+        console.error('Failed to initialize Web Audio API:', error);
+        alert('Your browser may not support audio visualization');
+    }
+}
+
+// Resize Canvas for Responsive Design
+function resizeCanvas() {
+    if (!elements.canvas) return;
+
+    const container = elements.canvas.parentElement;
+    const containerWidth = container.clientWidth;
+
+    // Set canvas dimensions based on screen size
+    if (window.innerWidth <= 480) {
+        // Mobile phones
+        elements.canvas.width = Math.min(containerWidth - 40, 600);
+        elements.canvas.height = 60;
+    } else if (window.innerWidth <= 768) {
+        // Tablets
+        elements.canvas.width = Math.min(containerWidth - 40, 700);
+        elements.canvas.height = 80;
+    } else {
+        // Desktop
+        elements.canvas.width = Math.min(containerWidth - 40, 800);
+        elements.canvas.height = 120;
+    }
+}
+
+// Visualizer Controls
+function startVisualizer() {
+    if (!elements.canvas) return;
+
+    // Resume audio context if suspended
+    if (audioContext && audioContext.state === 'suspended') {
+        audioContext.resume();
+    }
+
+    elements.canvas.classList.add('active');
+    drawVisualizer();
+}
+
+function stopVisualizer() {
+    if (!elements.canvas) return;
+
+    elements.canvas.classList.remove('active');
+
+    if (animationId) {
+        cancelAnimationFrame(animationId);
+        animationId = null;
+    }
+
+    // Clear canvas
+    const ctx = elements.canvasCtx;
+    ctx.clearRect(0, 0, elements.canvas.width, elements.canvas.height);
+}
+
+// Draw Visualizer - Multiple Professional Styles
+function drawVisualizer() {
+    if (!state.isPlaying) {
+        stopVisualizer();
+        return;
+    }
+
+    animationId = requestAnimationFrame(drawVisualizer);
+
+    // Get frequency data
+    analyser.getByteFrequencyData(dataArray);
+
+    const canvas = elements.canvas;
+    const ctx = elements.canvasCtx;
+    const width = canvas.width;
+    const height = canvas.height;
+
+    // Clear canvas
+    ctx.clearRect(0, 0, width, height);
+
+    // Style 1: Horizontal Wave Bars (Like your image)
+    drawSymmetricBars(ctx, width, height, dataArray, bufferLength);
+}
+
+// Style 1: Horizontal Wave Bars (Like your image)
+function drawSymmetricBars(ctx, width, height, dataArray, bufferLength) {
+    // Adjust number of bars based on screen size for better performance
+    let numBars;
+    if (window.innerWidth <= 480) {
+        numBars = 50; // Mobile: fewer bars for performance
+    } else if (window.innerWidth <= 768) {
+        numBars = 65; // Tablet: medium bars
+    } else {
+        numBars = 80; // Desktop: full bars
+    }
+
+    const barWidth = width / numBars;
+    const maxBarHeight = height * 0.45;
+
+    for (let i = 0; i < numBars; i++) {
+        // Map bar index to frequency data with interpolation
+        const dataIndex = Math.floor((i / numBars) * bufferLength);
+        const nextDataIndex = Math.min(dataIndex + 1, bufferLength - 1);
+        const fraction = ((i / numBars) * bufferLength) - dataIndex;
+
+        // Interpolate between adjacent frequency values for smoothness
+        const value1 = dataArray[dataIndex] / 255;
+        const value2 = dataArray[nextDataIndex] / 255;
+        const interpolatedValue = value1 + (value2 - value1) * fraction;
+
+        // Calculate bar height with some minimum height
+        const barHeight = Math.max(4, interpolatedValue * maxBarHeight);
+
+        // Position from center
+        const centerY = height / 2;
+        const x = i * barWidth;
+
+        // Create gradient for each bar (red/pink like your image)
+        const gradient = ctx.createLinearGradient(0, centerY - barHeight, 0, centerY + barHeight);
+        gradient.addColorStop(0, '#ff1744');
+        gradient.addColorStop(0.5, '#ff4569');
+        gradient.addColorStop(1, '#ff1744');
+
+        ctx.fillStyle = gradient;
+
+        // Draw bar with rounded corners
+        const barSpacing = 1;
+        const barActualWidth = barWidth - barSpacing;
+
+        // Draw top half
+        ctx.fillRect(x, centerY - barHeight, barActualWidth, barHeight);
+
+        // Draw bottom half (mirrored)
+        ctx.fillRect(x, centerY, barActualWidth, barHeight);
+
+        // Add subtle glow
+        ctx.shadowBlur = 8;
+        ctx.shadowColor = '#ff1744';
+    }
+
+    // Reset shadow
+    ctx.shadowBlur = 0;
+}
+
+// Style 2: Circular Visualizer (Alternative)
+function drawCircularVisualizer(ctx, width, height, dataArray, bufferLength) {
+    const centerX = width / 2;
+    const centerY = height / 2;
+    const radius = Math.min(width, height) / 3;
+
+    for (let i = 0; i < bufferLength; i++) {
+        const angle = (i / bufferLength) * Math.PI * 2;
+        const barHeight = (dataArray[i] / 255) * 50;
+
+        const x1 = centerX + Math.cos(angle) * radius;
+        const y1 = centerY + Math.sin(angle) * radius;
+        const x2 = centerX + Math.cos(angle) * (radius + barHeight);
+        const y2 = centerY + Math.sin(angle) * (radius + barHeight);
+
+        // Gradient for each bar
+        const gradient = ctx.createLinearGradient(x1, y1, x2, y2);
+        gradient.addColorStop(0, '#1ed760');
+        gradient.addColorStop(1, '#169c46');
+
+        ctx.strokeStyle = gradient;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+    }
+}
+
+// Style 3: Wave Visualizer
+function drawWaveVisualizer(ctx, width, height, dataArray, bufferLength) {
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = '#1db954';
+    ctx.beginPath();
+
+    const sliceWidth = width / bufferLength;
+    let x = 0;
+
+    for (let i = 0; i < bufferLength; i++) {
+        const v = dataArray[i] / 255.0;
+        const y = v * height;
+
+        if (i === 0) {
+            ctx.moveTo(x, y);
+        } else {
+            ctx.lineTo(x, y);
+        }
+
+        x += sliceWidth;
+    }
+
+    ctx.stroke();
+
+    // Add glow
+    ctx.shadowBlur = 15;
+    ctx.shadowColor = '#1db954';
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+}
+
+// Utilities
+function formatTime(iso) {
+    try {
+        return new Date(iso).toLocaleTimeString('en-US', {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit'
+        });
+    } catch {
+        return 'Invalid';
+    }
+}
+
+// Seekbar Setup and Handlers
+function setupSeekbar() {
+    if (!elements.progressBar) return;
+
+    let isDragging = false;
+
+    // Mouse/Touch drag handlers
+    elements.progressBar.addEventListener('mousedown', startDrag);
+    elements.progressBar.addEventListener('touchstart', startDrag);
+
+    document.addEventListener('mousemove', drag);
+    document.addEventListener('touchmove', drag);
+
+    document.addEventListener('mouseup', endDrag);
+    document.addEventListener('touchend', endDrag);
+
+    function startDrag(e) {
+        isDragging = true;
+        state.isDragging = true;
+        elements.progressHandle.classList.add('dragging');
+        updateSeekPosition(e);
+    }
+
+    function drag(e) {
+        if (!isDragging) return;
+        updateSeekPosition(e);
+    }
+
+    function endDrag() {
+        if (!isDragging) return;
+        isDragging = false;
+        state.isDragging = false;
+        elements.progressHandle.classList.remove('dragging');
+
+        // Seek to the position
+        seekToPosition(state.seekPosition);
+    }
+
+    function updateSeekPosition(e) {
+        const rect = elements.progressBar.getBoundingClientRect();
+        const x = (e.type.includes('touch') ? e.touches[0].clientX : e.clientX) - rect.left;
+        const percent = Math.max(0, Math.min(1, x / rect.width));
+
+        state.seekPosition = percent * state.bufferDuration;
+
+        // Update UI
+        const position = percent * 100;
+        elements.progressFill.style.width = `${position}%`;
+        elements.progressHandle.style.left = `${position}%`;
+
+        // Update tooltip
+        const timeText = formatTimeFromSeconds(state.seekPosition);
+        const isAtLive = state.seekPosition >= state.bufferDuration - 5;
+        elements.progressTooltip.textContent = isAtLive ? 'LIVE' : `${timeText} ago`;
+        elements.progressTooltip.style.left = `${position}%`;
+    }
+
+    // Click to seek
+    elements.progressBar.addEventListener('click', (e) => {
+        if (!state.isDragging) {
+            const rect = elements.progressBar.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const percent = Math.max(0, Math.min(1, x / rect.width));
+            state.seekPosition = percent * state.bufferDuration;
+            seekToPosition(state.seekPosition);
+        }
+    });
+}
+
+// Seek to specific position
+function seekToPosition(seconds) {
+    if (!state.currentStation || state.bufferDuration === 0) return;
+
+    // Calculate how far back from live
+    const secondsFromLive = state.bufferDuration - seconds;
+
+    // If within 5 seconds of live, play live
+    if (secondsFromLive < 5) {
+        playLive();
+        state.isLive = true;
+        elements.liveIndicator.style.display = 'inline-block';
+        state.currentTime = state.bufferDuration;
+    } else {
+        // Play from that position
+        state.isLive = false;
+        elements.liveIndicator.style.display = 'none';
+        state.currentTime = seconds;
+        state.playbackStartTime = Date.now();
+
+        const station = CONFIG.STATIONS[state.currentStation];
+        const url = `${CONFIG.API_BASE}/rewind/${state.currentStation}?seconds=${Math.floor(secondsFromLive)}`;
+
+        // Initialize audio context on first play
+        if (!audioContext) {
+            initAudioContext();
+        }
+
+        elements.audio.src = url;
+        elements.audio.play()
+            .then(() => {
+                elements.playButton.textContent = '⏸️';
+                elements.playButton.onclick = pauseStream;
+                elements.nowPlaying.textContent = station.name;
+
+                const minutesAgo = Math.floor(secondsFromLive / 60);
+                elements.nowPlayingStation.innerHTML = `⏪ ${minutesAgo} min ago <span class="playing-animation"><span></span><span></span><span></span></span>`;
+
+                console.log('⏪ Seeking to:', formatTimeFromSeconds(seconds), `(${Math.floor(secondsFromLive)}s ago)`);
+            })
+            .catch(err => {
+                console.error('Seek error:', err);
+                alert('Failed to seek');
+            });
+    }
+}
+
+// Format seconds to MM:SS
+function formatTimeFromSeconds(seconds) {
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+}
+
+// Update seekbar position during playback
+function updateSeekbarPosition() {
+    if (state.isDragging || !state.isPlaying) return;
+
+    // Calculate current position
+    let currentPos;
+    if (state.isLive) {
+        // At live position
+        currentPos = state.bufferDuration;
+        elements.liveIndicator.style.display = 'inline-block';
+    } else {
+        // Calculate elapsed time since playback started
+        const elapsedSeconds = state.currentTime + ((Date.now() - state.playbackStartTime) / 1000);
+        currentPos = Math.min(elapsedSeconds, state.bufferDuration);
+
+        // Check if we've caught up to live
+        if (currentPos >= state.bufferDuration - 5) {
+            // Close to live, switch to live mode
+            state.isLive = true;
+            elements.liveIndicator.style.display = 'inline-block';
+            currentPos = state.bufferDuration;
+        } else {
+            elements.liveIndicator.style.display = 'none';
+        }
+    }
+
+    // Update UI
+    const percent = state.bufferDuration > 0 ? (currentPos / state.bufferDuration) * 100 : 0;
+    elements.progressFill.style.width = `${percent}%`;
+    elements.progressHandle.style.left = `${percent}%`;
+
+    // Update current time display
+    elements.currentTime.textContent = formatTimeFromSeconds(currentPos);
+}
+
+// Export functions for HTML onclick
+window.playLive = playLive;
+window.pauseStream = pauseStream;
+window.skipForward = skipForward;
+window.rewind = rewind;
+window.stopStream = stopStream;
+window.refreshStatus = refreshStatus;
+window.previousStation = previousStation;
+window.nextStation = nextStation;
+
+console.log('✅ App loaded - Real-time audio visualizer ready');
