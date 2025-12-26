@@ -825,6 +825,11 @@ function setupSeekbar() {
         state.isDragging = false;
         elements.progressHandle.classList.remove('dragging');
 
+        // Hide tooltip
+        if (elements.progressTooltip) {
+            elements.progressTooltip.style.display = 'none';
+        }
+
         // Seek to the position
         seekToPosition(state.seekPosition);
     }
@@ -850,17 +855,32 @@ function setupSeekbar() {
         const secondsFromLive = effectiveBufferDuration - state.seekPosition;
         const isAtLive = secondsFromLive < 5;
 
-        // Show tooltip
+        // Show tooltip with rewind time
         if (elements.progressTooltip) {
             elements.progressTooltip.style.display = 'block';
+            elements.progressTooltip.style.left = `${position}%`;
 
             if (isAtLive) {
-                elements.progressTooltip.textContent = 'LIVE';
+                elements.progressTooltip.textContent = '🔴 LIVE';
             } else {
-                const minutesAgo = Math.floor(secondsFromLive / 60);
-                const secondsAgo = Math.floor(secondsFromLive % 60);
-                if (minutesAgo > 0) {
-                    elements.progressTooltip.textContent = `${minutesAgo}:${secondsAgo.toString().padStart(2, '0')} ago`;
+                // Check if beyond available buffer
+                const beyondBuffer = secondsFromLive > state.bufferDuration;
+                const displaySeconds = beyondBuffer ? state.bufferDuration : secondsFromLive;
+
+                const minutesAgo = Math.floor(displaySeconds / 60);
+                const secondsAgo = Math.floor(displaySeconds % 60);
+
+                if (minutesAgo >= 60) {
+                    // Show hours
+                    const hours = Math.floor(minutesAgo / 60);
+                    const mins = minutesAgo % 60;
+                    elements.progressTooltip.textContent = beyondBuffer
+                        ? `⚠️ ${hours}h ${mins}m (max)`
+                        : `${hours}h ${mins}m ago`;
+                } else if (minutesAgo > 0) {
+                    elements.progressTooltip.textContent = beyondBuffer
+                        ? `⚠️ ${minutesAgo}m (max)`
+                        : `${minutesAgo}m ${secondsAgo}s ago`;
                 } else {
                     elements.progressTooltip.textContent = `${secondsAgo}s ago`;
                 }
@@ -919,21 +939,32 @@ function seekToPosition(seconds) {
     // If seconds = 0 (left edge), we're at the oldest buffered time within the limit
     const secondsFromLive = effectiveBufferDuration - seconds;
 
-    // Additional safety check: don't seek beyond actual available buffer
+    // IMPORTANT: Adjust to actual available buffer if user seeks beyond it
+    // Example: Station has 2h limit, but backend only has 1h buffer
+    // User drags to 1.5h → we play from 1h (max available)
+    let actualSecondsFromLive = secondsFromLive;
+
     if (secondsFromLive > state.bufferDuration) {
         console.warn('⚠️ Requested position beyond available buffer');
-        console.log('Requested seconds from live:', secondsFromLive, '| Available buffer:', state.bufferDuration);
-        // Adjust to available buffer
-        const adjustedSecondsFromLive = Math.min(secondsFromLive, state.bufferDuration);
-        console.log('Adjusting to:', adjustedSecondsFromLive, 'seconds from live');
+        console.log('Requested:', Math.floor(secondsFromLive / 60) + 'm', '| Available:', Math.floor(state.bufferDuration / 60) + 'm');
+
+        // Use maximum available buffer
+        actualSecondsFromLive = state.bufferDuration;
+
+        // Show toast to inform user
+        const requestedMinutes = Math.floor(secondsFromLive / 60);
+        const availableMinutes = Math.floor(state.bufferDuration / 60);
+        showToast(`⚠️ Only ${availableMinutes}m available (requested ${requestedMinutes}m)`, 'warning');
+
+        console.log('✅ Adjusted to max available:', Math.floor(actualSecondsFromLive / 60) + 'm');
     }
 
     console.log('🎯 Seek request - Position:', formatTimeFromSeconds(seconds),
-                '| Seconds from live:', secondsFromLive,
+                '| Seconds from live:', actualSecondsFromLive,
                 '| Effective buffer:', formatTimeFromSeconds(effectiveBufferDuration));
 
     // If within 5 seconds of live, just go to live
-    if (secondsFromLive < 5) {
+    if (actualSecondsFromLive < 5) {
         goToLive();
         return;
     }
@@ -944,19 +975,20 @@ function seekToPosition(seconds) {
         elements.liveIndicator.style.display = 'none';
     }
 
-    // Store how far from live we are (this is what matters!)
-    state.seekedSecondsFromLive = secondsFromLive;
+    // Store how far from live we are (using adjusted value!)
+    state.seekedSecondsFromLive = actualSecondsFromLive;
     state.playbackStartTime = Date.now();
 
     // Also store the position for reference
     state.currentTime = seconds;
 
     const station = CONFIG.STATIONS[state.currentStation];
-    const rewindSeconds = Math.floor(secondsFromLive);
+    const rewindSeconds = Math.floor(actualSecondsFromLive);
 
-    // Validate rewind seconds is within station's max buffer duration
-    if (rewindSeconds < 0 || rewindSeconds > state.maxBufferDuration) {
-        console.error('Invalid rewind seconds:', rewindSeconds, '| Max allowed:', state.maxBufferDuration);
+    // Final validation
+    if (rewindSeconds < 0) {
+        console.error('Invalid rewind seconds:', rewindSeconds);
+        showToast('❌ Invalid seek position', 'error');
         return;
     }
 

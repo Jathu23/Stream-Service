@@ -1,0 +1,1520 @@
+<!DOCTYPE html>
+<html lang="ta">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tamil IPTV Player with EPG</title>
+    <!-- HLS.js Library for playing .m3u8 streams -->
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <style>
+        /* ==========================================
+           Tamil IPTV Player - Mobile First Design with EPG
+           ========================================== */
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        :root {
+            --primary: #6366f1;
+            --primary-dark: #4f46e5;
+            --accent: #ec4899;
+            --success: #10b981;
+            --error: #ef4444;
+            --warning: #f59e0b;
+
+            --bg: #0f0f1e;
+            --bg-light: #1a1a2e;
+            --bg-card: #16162a;
+            --bg-elevated: #1f1f37;
+
+            --text: #ffffff;
+            --text-muted: #a1a1aa;
+            --text-dim: #71717a;
+
+            --border: #27273f;
+
+            --shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+            --shadow-lg: 0 10px 40px rgba(0, 0, 0, 0.5);
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+            overflow-x: hidden;
+            -webkit-font-smoothing: antialiased;
+            margin: 0;
+        }
+
+        .app {
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* ==========================================
+           HEADER
+           ========================================== */
+
+        .app-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 16px;
+            background: var(--bg-card);
+            border-bottom: 1px solid var(--border);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            backdrop-filter: blur(20px);
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .logo-icon {
+            font-size: 1.5rem;
+        }
+
+        .logo h1 {
+            font-size: 1.125rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--primary), var(--accent));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .btn-icon {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            font-size: 1.125rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .btn-icon:active {
+            transform: scale(0.9);
+            background: var(--bg-elevated);
+        }
+
+        /* ==========================================
+           VIDEO PLAYER
+           ========================================== */
+
+        .video-container {
+            position: relative;
+            background: #000;
+            width: 100%;
+            aspect-ratio: 16 / 9;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        video {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+
+        .video-placeholder {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16162a 100%);
+            gap: 16px;
+        }
+
+        .video-placeholder.hidden {
+            display: none;
+        }
+
+        .placeholder-icon {
+            font-size: 4rem;
+            opacity: 0.5;
+        }
+
+        .placeholder-text {
+            font-size: 1rem;
+            color: var(--text-muted);
+        }
+
+        /* Loading Spinner */
+        .loading-spinner {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 10;
+        }
+
+        .loading-spinner.hidden {
+            display: none;
+        }
+
+        .spinner {
+            width: 48px;
+            height: 48px;
+            border: 4px solid var(--border);
+            border-top-color: var(--primary);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Error Message */
+        .error-message {
+            position: absolute;
+            bottom: 16px;
+            left: 16px;
+            right: 16px;
+            background: var(--error);
+            color: white;
+            padding: 12px 16px;
+            border-radius: 8px;
+            font-size: 0.875rem;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            z-index: 20;
+            animation: slideUp 0.3s ease;
+        }
+
+        .error-message.hidden {
+            display: none;
+        }
+
+        @keyframes slideUp {
+            from {
+                transform: translateY(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateY(0);
+                opacity: 1;
+            }
+        }
+
+        /* ==========================================
+           NOW PLAYING INFO WITH EPG
+           ========================================== */
+
+        .now-playing {
+            padding: 16px;
+            background: var(--bg-card);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .now-playing-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 8px;
+        }
+
+        .now-playing-label {
+            font-size: 0.75rem;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .now-playing-channel {
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: var(--text);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+
+        .channel-logo {
+            width: 32px;
+            height: 32px;
+            border-radius: 6px;
+            object-fit: cover;
+            background: var(--bg-elevated);
+        }
+
+        .live-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            background: var(--error);
+            color: white;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 700;
+        }
+
+        .live-dot {
+            width: 6px;
+            height: 6px;
+            background: white;
+            border-radius: 50%;
+            animation: pulse-dot 1.5s ease-in-out infinite;
+        }
+
+        @keyframes pulse-dot {
+            0%, 100% {
+                opacity: 1;
+                transform: scale(1);
+            }
+            50% {
+                opacity: 0.6;
+                transform: scale(0.8);
+            }
+        }
+
+        /* EPG Program Info */
+        .epg-current {
+            background: var(--bg-elevated);
+            padding: 12px;
+            border-radius: 8px;
+            margin-top: 8px;
+        }
+
+        .epg-program-title {
+            font-size: 0.95rem;
+            font-weight: 600;
+            color: var(--text);
+            margin-bottom: 4px;
+        }
+
+        .epg-program-time {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .epg-progress {
+            flex: 1;
+            height: 4px;
+            background: var(--border);
+            border-radius: 2px;
+            overflow: hidden;
+            margin: 0 8px;
+        }
+
+        .epg-progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--primary), var(--accent));
+            transition: width 0.3s ease;
+        }
+
+        .epg-next {
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px solid var(--border);
+            font-size: 0.85rem;
+            color: var(--text-dim);
+        }
+
+        .epg-next-title {
+            color: var(--text-muted);
+            font-weight: 500;
+        }
+
+        /* ==========================================
+           CHANNEL SELECTOR BUTTON (MOBILE)
+           ========================================== */
+
+        .channel-selector-btn {
+            position: fixed;
+            bottom: 24px;
+            right: 16px;
+            width: 56px;
+            height: 56px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, var(--primary), var(--accent));
+            border: none;
+            color: white;
+            font-size: 1.5rem;
+            cursor: pointer;
+            box-shadow: var(--shadow-lg);
+            transition: all 0.3s ease;
+            z-index: 90;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .channel-selector-btn:active {
+            transform: scale(0.9);
+        }
+
+        /* ==========================================
+           CHANNEL LIST (BOTTOM SHEET ON MOBILE)
+           ========================================== */
+
+        .channel-sheet-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.7);
+            z-index: 200;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s ease;
+        }
+
+        .channel-sheet-overlay.active {
+            opacity: 1;
+            pointer-events: all;
+        }
+
+        .channel-sheet {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            max-height: 70vh;
+            background: var(--bg-card);
+            border-radius: 20px 20px 0 0;
+            z-index: 201;
+            transform: translateY(100%);
+            transition: transform 0.3s ease;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .channel-sheet.active {
+            transform: translateY(0);
+        }
+
+        .sheet-header {
+            padding: 16px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .sheet-handle {
+            position: absolute;
+            top: 8px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 40px;
+            height: 4px;
+            background: var(--border);
+            border-radius: 2px;
+        }
+
+        .sheet-title {
+            font-size: 1.125rem;
+            font-weight: 700;
+            margin-top: 16px;
+        }
+
+        .btn-close {
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            font-size: 1.5rem;
+            cursor: pointer;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-top: 16px;
+        }
+
+        .btn-close:active {
+            background: var(--bg-elevated);
+        }
+
+        /* Filter Tabs */
+        .filter-tabs {
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            gap: 8px;
+            overflow-x: auto;
+            scrollbar-width: none;
+        }
+
+        .filter-tabs::-webkit-scrollbar {
+            display: none;
+        }
+
+        .filter-tab {
+            padding: 6px 12px;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            cursor: pointer;
+            white-space: nowrap;
+            transition: all 0.2s ease;
+        }
+
+        .filter-tab:active {
+            transform: scale(0.95);
+        }
+
+        .filter-tab.active {
+            background: linear-gradient(135deg, var(--primary), var(--accent));
+            border-color: transparent;
+            color: white;
+        }
+
+        /* Search Box */
+        .search-box {
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .search-input {
+            width: 100%;
+            padding: 12px 16px;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            color: var(--text);
+            font-size: 1rem;
+            outline: none;
+            transition: all 0.2s ease;
+        }
+
+        .search-input:focus {
+            border-color: var(--primary);
+            background: var(--bg);
+        }
+
+        .search-input::placeholder {
+            color: var(--text-dim);
+        }
+
+        /* Channel List */
+        .channel-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 8px;
+        }
+
+        .channel-item {
+            padding: 12px;
+            margin-bottom: 4px;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+        }
+
+        .channel-item:active {
+            background: var(--bg-light);
+            transform: scale(0.98);
+        }
+
+        .channel-item.active {
+            background: linear-gradient(135deg, var(--primary), var(--accent));
+            border-color: transparent;
+        }
+
+        .channel-logo-wrapper {
+            width: 48px;
+            height: 48px;
+            flex-shrink: 0;
+            background: var(--bg);
+            border-radius: 8px;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .channel-item.active .channel-logo-wrapper {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        .channel-item-logo {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .channel-icon {
+            font-size: 1.5rem;
+        }
+
+        .channel-item-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .channel-item-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 4px;
+        }
+
+        .channel-name {
+            font-weight: 600;
+            font-size: 0.95rem;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .channel-quality {
+            font-size: 0.7rem;
+            padding: 2px 6px;
+            background: rgba(99, 102, 241, 0.2);
+            border-radius: 4px;
+            color: var(--primary);
+            font-weight: 600;
+        }
+
+        .channel-item.active .channel-quality {
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+        }
+
+        .channel-category {
+            font-size: 0.75rem;
+            color: var(--text-dim);
+            margin-bottom: 4px;
+        }
+
+        .channel-item.active .channel-category {
+            color: rgba(255, 255, 255, 0.7);
+        }
+
+        .channel-epg-preview {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .channel-item.active .channel-epg-preview {
+            color: rgba(255, 255, 255, 0.9);
+        }
+
+        .empty-state {
+            padding: 48px 24px;
+            text-align: center;
+            color: var(--text-muted);
+        }
+
+        .empty-icon {
+            font-size: 3rem;
+            opacity: 0.5;
+            margin-bottom: 16px;
+        }
+
+        /* ==========================================
+           STATS (DESKTOP)
+           ========================================== */
+
+        .stats {
+            padding: 16px;
+            background: var(--bg-card);
+            border-top: 1px solid var(--border);
+            display: none;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 12px;
+        }
+
+        .stat-item {
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: var(--primary);
+        }
+
+        .stat-label {
+            font-size: 0.75rem;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        /* ==========================================
+           RESPONSIVE - TABLET & DESKTOP
+           ========================================== */
+
+        @media (min-width: 768px) {
+            .app {
+                display: grid;
+                grid-template-columns: 350px 1fr;
+                grid-template-rows: auto 1fr auto;
+                height: 100vh;
+            }
+
+            .app-header {
+                grid-column: 1 / -1;
+            }
+
+            .video-section {
+                display: flex;
+                flex-direction: column;
+            }
+
+            .channel-selector-btn {
+                display: none;
+            }
+
+            .channel-sheet-overlay {
+                display: none;
+            }
+
+            .channel-sheet {
+                position: static;
+                transform: none;
+                max-height: none;
+                border-radius: 0;
+                border-right: 1px solid var(--border);
+                grid-row: 2 / -1;
+            }
+
+            .stats {
+                display: block;
+                grid-column: 1 / -1;
+            }
+
+            .now-playing {
+                border-right: 1px solid var(--border);
+            }
+        }
+
+        @media (min-width: 1024px) {
+            .app {
+                grid-template-columns: 400px 1fr;
+            }
+
+            .video-container {
+                max-width: 1200px;
+                margin: 0 auto;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="app">
+        <!-- Header -->
+        <header class="app-header">
+            <div class="logo">
+                <span class="logo-icon">📺</span>
+                <h1>Tamil IPTV</h1>
+            </div>
+            <div class="header-actions">
+                <button class="btn-icon" onclick="window.location.href='/'" title="FM Radio">
+                    <span>📻</span>
+                </button>
+            </div>
+        </header>
+
+        <!-- Channel Sheet (Sidebar on Desktop, Bottom Sheet on Mobile) -->
+        <div class="channel-sheet" id="channelSheet">
+            <div class="sheet-header">
+                <div class="sheet-handle"></div>
+                <h2 class="sheet-title">Channels</h2>
+                <button class="btn-close" onclick="closeChannelSheet()" aria-label="Close">×</button>
+            </div>
+
+            <!-- Category Filter Tabs -->
+            <div class="filter-tabs" id="filterTabs">
+                <button class="filter-tab active" data-category="all">All</button>
+            </div>
+
+            <div class="search-box">
+                <input
+                    type="text"
+                    class="search-input"
+                    id="searchInput"
+                    placeholder="Search channels..."
+                    oninput="filterChannels()"
+                >
+            </div>
+
+            <div class="channel-list" id="channelList">
+                <div class="empty-state">
+                    <div class="empty-icon">📡</div>
+                    <div>Loading channels...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Channel Sheet Overlay (Mobile Only) -->
+        <div class="channel-sheet-overlay" id="channelSheetOverlay" onclick="closeChannelSheet()"></div>
+
+        <!-- Video Section -->
+        <div class="video-section">
+            <!-- Now Playing Info with EPG -->
+            <div class="now-playing">
+                <div class="now-playing-header">
+                    <div class="now-playing-label">Now Playing</div>
+                </div>
+                <div class="now-playing-channel" id="nowPlayingChannel">
+                    Select a channel to start
+                </div>
+
+                <!-- EPG Info (shown when channel is playing) -->
+                <div class="epg-current hidden" id="epgCurrent">
+                    <div class="epg-program-title" id="epgProgramTitle">Program loading...</div>
+                    <div class="epg-program-time">
+                        <span id="epgProgramTime">--:-- - --:--</span>
+                        <div class="epg-progress">
+                            <div class="epg-progress-fill" id="epgProgressFill" style="width: 0%"></div>
+                        </div>
+                    </div>
+                    <div class="epg-next" id="epgNext"></div>
+                </div>
+            </div>
+
+            <!-- Video Player -->
+            <div class="video-container">
+                <video id="video" controls playsinline></video>
+
+                <!-- Placeholder -->
+                <div class="video-placeholder" id="videoPlaceholder">
+                    <div class="placeholder-icon">📺</div>
+                    <div class="placeholder-text">Select a channel to watch</div>
+                </div>
+
+                <!-- Loading Spinner -->
+                <div class="loading-spinner hidden" id="loadingSpinner">
+                    <div class="spinner"></div>
+                </div>
+
+                <!-- Error Message -->
+                <div class="error-message hidden" id="errorMessage">
+                    <span>⚠️</span>
+                    <span id="errorText"></span>
+                </div>
+            </div>
+
+            <!-- Stats (Desktop Only) -->
+            <div class="stats">
+                <div class="stats-grid">
+                    <div class="stat-item">
+                        <div class="stat-value" id="totalChannels">0</div>
+                        <div class="stat-label">Channels</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="totalCategories">0</div>
+                        <div class="stat-label">Categories</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="currentQuality">HD</div>
+                        <div class="stat-label">Quality</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="bufferStatus">Ready</div>
+                        <div class="stat-label">Status</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Floating Channel Selector Button (Mobile Only) -->
+        <button class="channel-selector-btn" onclick="openChannelSheet()" aria-label="Select Channel">
+            📺
+        </button>
+    </div>
+
+    <script>
+        // State
+        const state = {
+            channels: [],
+            filteredChannels: [],
+            currentChannel: null,
+            hls: null,
+            isLoading: false,
+            categories: new Set(),
+            currentCategory: 'all',
+            epgData: {},
+            epgUpdateInterval: null
+        };
+
+        // Elements
+        const elements = {
+            video: document.getElementById('video'),
+            channelList: document.getElementById('channelList'),
+            channelSheet: document.getElementById('channelSheet'),
+            channelSheetOverlay: document.getElementById('channelSheetOverlay'),
+            searchInput: document.getElementById('searchInput'),
+            nowPlayingChannel: document.getElementById('nowPlayingChannel'),
+            videoPlaceholder: document.getElementById('videoPlaceholder'),
+            loadingSpinner: document.getElementById('loadingSpinner'),
+            errorMessage: document.getElementById('errorMessage'),
+            errorText: document.getElementById('errorText'),
+            totalChannels: document.getElementById('totalChannels'),
+            totalCategories: document.getElementById('totalCategories'),
+            bufferStatus: document.getElementById('bufferStatus'),
+            filterTabs: document.getElementById('filterTabs'),
+            epgCurrent: document.getElementById('epgCurrent'),
+            epgProgramTitle: document.getElementById('epgProgramTitle'),
+            epgProgramTime: document.getElementById('epgProgramTime'),
+            epgProgressFill: document.getElementById('epgProgressFill'),
+            epgNext: document.getElementById('epgNext')
+        };
+
+        // Configuration
+        const CONFIG = {
+            PLAYLIST_URL: 'https://iptv-org.github.io/iptv/languages/tam.m3u',
+            GUIDES_API: 'https://iptv-org.github.io/api/guides.json',
+            ERROR_TIMEOUT: 5000,
+            EPG_UPDATE_INTERVAL: 60000 // Update EPG every minute
+        };
+
+        // Initialize
+        async function init() {
+            console.log('🚀 Initializing Tamil IPTV Player with EPG...');
+
+            // Set up video event listeners
+            setupVideoListeners();
+
+            // Load channels
+            await loadChannels();
+
+            // Load EPG guides
+            await loadEPGGuides();
+
+            // Check if desktop and show channel sheet
+            if (window.innerWidth >= 768) {
+                elements.channelSheet.classList.add('active');
+            }
+        }
+
+        // Load Channels from M3U Playlist
+        async function loadChannels() {
+            try {
+                showLoading(true);
+                console.log('📡 Fetching M3U playlist...');
+
+                const response = await fetch(CONFIG.PLAYLIST_URL);
+                if (!response.ok) {
+                    throw new Error('Failed to fetch playlist');
+                }
+
+                const data = await response.text();
+                parseM3U(data);
+
+                console.log(`✅ Loaded ${state.channels.length} channels`);
+                elements.totalChannels.textContent = state.channels.length;
+                elements.totalCategories.textContent = state.categories.size;
+
+                // Build category filter tabs
+                buildCategoryTabs();
+
+            } catch (error) {
+                console.error('❌ Error loading channels:', error);
+                showError('Failed to load channels. Please check your connection.');
+                elements.channelList.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-icon">⚠️</div>
+                        <div>Failed to load channels</div>
+                        <div style="margin-top: 8px; font-size: 0.875rem; color: var(--text-dim);">
+                            ${escapeHtml(error.message)}
+                        </div>
+                    </div>
+                `;
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        // Parse M3U Playlist Format with Extended Info
+        function parseM3U(data) {
+            const lines = data.split('\n');
+            state.channels = [];
+
+            for (let i = 0; i < lines.length; i++) {
+                if (lines[i].startsWith('#EXTINF')) {
+                    const line = lines[i];
+
+                    // Extract tvg-id
+                    const tvgIdMatch = line.match(/tvg-id="([^"]+)"/);
+                    const tvgId = tvgIdMatch ? tvgIdMatch[1] : '';
+
+                    // Extract tvg-logo
+                    const tvgLogoMatch = line.match(/tvg-logo="([^"]+)"/);
+                    const tvgLogo = tvgLogoMatch ? tvgLogoMatch[1] : '';
+
+                    // Extract group-title (category)
+                    const groupTitleMatch = line.match(/group-title="([^"]+)"/);
+                    const category = groupTitleMatch ? groupTitleMatch[1] : 'General';
+
+                    // Extract channel name (after last comma)
+                    const namePart = line.split(',');
+                    let name = namePart[namePart.length - 1].trim() || 'Unknown Channel';
+
+                    // Extract quality from name (e.g., "720p", "1080p")
+                    const qualityMatch = name.match(/\((\d+p)\)/);
+                    const quality = qualityMatch ? qualityMatch[1] : '';
+
+                    // Clean name (remove quality suffix)
+                    name = name.replace(/\s*\(\d+p\)\s*$/, '').trim();
+
+                    // Get stream URL (next line)
+                    const url = lines[i + 1]?.trim();
+
+                    if (url && url.startsWith('http')) {
+                        state.channels.push({
+                            id: `channel-${state.channels.length}`,
+                            name: name,
+                            url: url,
+                            tvgId: tvgId,
+                            logo: tvgLogo,
+                            category: category,
+                            quality: quality
+                        });
+
+                        // Add category to set
+                        state.categories.add(category);
+                    }
+                }
+            }
+
+            state.filteredChannels = [...state.channels];
+            renderChannels();
+        }
+
+        // Build Category Filter Tabs
+        function buildCategoryTabs() {
+            const categories = ['all', ...Array.from(state.categories).sort()];
+
+            elements.filterTabs.innerHTML = categories.map(cat => `
+                <button
+                    class="filter-tab ${cat === 'all' ? 'active' : ''}"
+                    data-category="${escapeHtml(cat)}"
+                    onclick="filterByCategory('${escapeHtml(cat)}')"
+                >
+                    ${cat === 'all' ? 'All' : escapeHtml(cat)}
+                </button>
+            `).join('');
+        }
+
+        // Filter by Category
+        function filterByCategory(category) {
+            state.currentCategory = category;
+
+            // Update active tab
+            document.querySelectorAll('.filter-tab').forEach(tab => {
+                tab.classList.toggle('active', tab.dataset.category === category);
+            });
+
+            // Filter and render
+            filterChannels();
+        }
+
+        // Render Channel List
+        function renderChannels() {
+            if (state.filteredChannels.length === 0) {
+                elements.channelList.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-icon">🔍</div>
+                        <div>No channels found</div>
+                    </div>
+                `;
+                return;
+            }
+
+            elements.channelList.innerHTML = state.filteredChannels.map(channel => {
+                const epgPreview = getChannelEPGPreview(channel.tvgId);
+
+                return `
+                    <div
+                        class="channel-item ${state.currentChannel?.id === channel.id ? 'active' : ''}"
+                        onclick="playChannel('${channel.id}')"
+                    >
+                        <div class="channel-logo-wrapper">
+                            ${channel.logo ?
+                                `<img src="${escapeHtml(channel.logo)}" alt="${escapeHtml(channel.name)}" class="channel-item-logo" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
+                                <span class="channel-icon" style="display:none;">📺</span>` :
+                                `<span class="channel-icon">📺</span>`
+                            }
+                        </div>
+                        <div class="channel-item-info">
+                            <div class="channel-item-header">
+                                <div class="channel-name">${escapeHtml(channel.name)}</div>
+                                ${channel.quality ? `<div class="channel-quality">${escapeHtml(channel.quality)}</div>` : ''}
+                            </div>
+                            <div class="channel-category">${escapeHtml(channel.category)}</div>
+                            ${epgPreview ? `<div class="channel-epg-preview">📺 ${escapeHtml(epgPreview)}</div>` : ''}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Filter Channels
+        function filterChannels() {
+            const query = elements.searchInput.value.toLowerCase().trim();
+
+            let filtered = [...state.channels];
+
+            // Filter by category
+            if (state.currentCategory !== 'all') {
+                filtered = filtered.filter(ch => ch.category === state.currentCategory);
+            }
+
+            // Filter by search query
+            if (query) {
+                filtered = filtered.filter(channel =>
+                    channel.name.toLowerCase().includes(query) ||
+                    channel.category.toLowerCase().includes(query)
+                );
+            }
+
+            state.filteredChannels = filtered;
+            renderChannels();
+        }
+
+        // Load EPG Guides
+        async function loadEPGGuides() {
+            try {
+                console.log('📅 Loading EPG guides...');
+                const response = await fetch(CONFIG.GUIDES_API);
+
+                if (!response.ok) {
+                    console.warn('EPG guides not available');
+                    return;
+                }
+
+                const guides = await response.json();
+
+                // Map channel IDs to EPG sources
+                guides.forEach(guide => {
+                    if (guide.channel && guide.site) {
+                        state.epgData[guide.channel] = {
+                            site: guide.site,
+                            siteName: guide.site_name,
+                            lang: guide.lang
+                        };
+                    }
+                });
+
+                console.log(`✅ Loaded EPG data for ${Object.keys(state.epgData).length} channels`);
+
+            } catch (error) {
+                console.warn('⚠️ EPG loading failed:', error);
+            }
+        }
+
+        // Get Channel EPG Preview (simulated - in real app would fetch from EPG XML)
+        function getChannelEPGPreview(tvgId) {
+            if (!tvgId || !state.epgData[tvgId]) {
+                return '';
+            }
+
+            // Simulate current program (in real app, parse EPG XML)
+            const hour = new Date().getHours();
+            const programs = [
+                'Morning News',
+                'Talk Show',
+                'Drama Series',
+                'Lunch News',
+                'Movie Time',
+                'Evening Magazine',
+                'Prime Time News',
+                'Entertainment Show',
+                'Late Night Movie'
+            ];
+
+            return programs[hour % programs.length] || '';
+        }
+
+        // Update EPG Display for Current Channel
+        function updateEPGDisplay() {
+            if (!state.currentChannel) {
+                elements.epgCurrent.classList.add('hidden');
+                return;
+            }
+
+            // Show EPG section (always show when channel is playing)
+            elements.epgCurrent.classList.remove('hidden');
+
+            // Get current time
+            const now = new Date();
+            const hour = now.getHours();
+            const minute = now.getMinutes();
+
+            // Get channel category for context-aware program names
+            const category = state.currentChannel.category || 'General';
+
+            // Generate realistic program schedule based on category
+            const programs = generateProgramSchedule(category);
+
+            let currentProgram = programs.find(p => hour >= p.start && hour < p.end);
+            if (!currentProgram) {
+                // Handle late night/early morning (0-6)
+                currentProgram = programs[programs.length - 1];
+            }
+
+            const nextProgramIndex = programs.indexOf(currentProgram) + 1;
+            const nextProgram = nextProgramIndex < programs.length ? programs[nextProgramIndex] : programs[0];
+
+            // Update UI
+            elements.epgProgramTitle.textContent = currentProgram.title;
+            elements.epgProgramTime.textContent = `${formatTime(currentProgram.start)}:00 - ${formatTime(currentProgram.end)}:00`;
+
+            // Calculate progress
+            const totalMinutes = (currentProgram.end - currentProgram.start) * 60;
+            const elapsedMinutes = (hour - currentProgram.start) * 60 + minute;
+            const progress = Math.max(0, Math.min(100, (elapsedMinutes / totalMinutes) * 100));
+            elements.epgProgressFill.style.width = `${progress}%`;
+
+            // Next program
+            elements.epgNext.innerHTML = `
+                <strong>Next:</strong> <span class="epg-next-title">${nextProgram.title}</span> at ${formatTime(nextProgram.start)}:00
+            `;
+        }
+
+        // Generate realistic program schedule based on category
+        function generateProgramSchedule(category) {
+            const schedules = {
+                'News': [
+                    { title: 'Early Morning News', start: 0, end: 6 },
+                    { title: 'Morning Headlines', start: 6, end: 9 },
+                    { title: 'News Today', start: 9, end: 12 },
+                    { title: 'Afternoon News', start: 12, end: 14 },
+                    { title: 'Breaking News Live', start: 14, end: 17 },
+                    { title: 'Evening Bulletin', start: 17, end: 19 },
+                    { title: 'Prime Time News', start: 19, end: 21 },
+                    { title: 'Night News Wrap', start: 21, end: 24 }
+                ],
+                'Entertainment': [
+                    { title: 'Morning Show', start: 0, end: 6 },
+                    { title: 'Breakfast Entertainment', start: 6, end: 9 },
+                    { title: 'Talk Show', start: 9, end: 11 },
+                    { title: 'Drama Serial', start: 11, end: 13 },
+                    { title: 'Afternoon Special', start: 13, end: 15 },
+                    { title: 'Family Drama', start: 15, end: 17 },
+                    { title: 'Reality Show', start: 17, end: 19 },
+                    { title: 'Prime Time Serial', start: 19, end: 21 },
+                    { title: 'Late Night Show', start: 21, end: 24 }
+                ],
+                'Movies': [
+                    { title: 'Classic Movie', start: 0, end: 6 },
+                    { title: 'Morning Movie', start: 6, end: 9 },
+                    { title: 'Action Movie', start: 9, end: 12 },
+                    { title: 'Comedy Movie', start: 12, end: 14 },
+                    { title: 'Afternoon Cinema', start: 14, end: 17 },
+                    { title: 'Family Movie', start: 17, end: 19 },
+                    { title: 'Prime Time Movie', start: 19, end: 22 },
+                    { title: 'Late Night Cinema', start: 22, end: 24 }
+                ],
+                'Music': [
+                    { title: 'Night Music', start: 0, end: 6 },
+                    { title: 'Morning Melodies', start: 6, end: 9 },
+                    { title: 'Hit Music Videos', start: 9, end: 12 },
+                    { title: 'Chart Toppers', start: 12, end: 15 },
+                    { title: 'Retro Classics', start: 15, end: 17 },
+                    { title: 'Evening Countdown', start: 17, end: 19 },
+                    { title: 'Prime Time Hits', start: 19, end: 22 },
+                    { title: 'Late Night Grooves', start: 22, end: 24 }
+                ],
+                'Religious': [
+                    { title: 'Dawn Prayer', start: 0, end: 6 },
+                    { title: 'Morning Devotion', start: 6, end: 8 },
+                    { title: 'Spiritual Discourse', start: 8, end: 10 },
+                    { title: 'Religious Stories', start: 10, end: 12 },
+                    { title: 'Bhajans & Mantras', start: 12, end: 15 },
+                    { title: 'Temple Live', start: 15, end: 17 },
+                    { title: 'Evening Prayer', start: 17, end: 19 },
+                    { title: 'Spiritual Talks', start: 19, end: 22 },
+                    { title: 'Night Meditation', start: 22, end: 24 }
+                ],
+                'Kids': [
+                    { title: 'Early Cartoons', start: 0, end: 6 },
+                    { title: 'Morning Cartoons', start: 6, end: 9 },
+                    { title: 'Kids Adventure', start: 9, end: 11 },
+                    { title: 'Educational Show', start: 11, end: 13 },
+                    { title: 'Afternoon Fun', start: 13, end: 15 },
+                    { title: 'Animated Movies', start: 15, end: 17 },
+                    { title: 'Kids Prime Time', start: 17, end: 19 },
+                    { title: 'Bedtime Stories', start: 19, end: 21 },
+                    { title: 'Night Cartoons', start: 21, end: 24 }
+                ],
+                'Documentary': [
+                    { title: 'Night Documentary', start: 0, end: 6 },
+                    { title: 'Nature & Wildlife', start: 6, end: 9 },
+                    { title: 'History Channel', start: 9, end: 12 },
+                    { title: 'Science Explorer', start: 12, end: 14 },
+                    { title: 'Travel World', start: 14, end: 17 },
+                    { title: 'Cultural Stories', start: 17, end: 19 },
+                    { title: 'Prime Investigates', start: 19, end: 21 },
+                    { title: 'Late Night Docs', start: 21, end: 24 }
+                ]
+            };
+
+            // Return category-specific schedule or default
+            return schedules[category] || [
+                { title: 'Overnight Programming', start: 0, end: 6 },
+                { title: 'Morning Show', start: 6, end: 9 },
+                { title: 'Mid-Morning Special', start: 9, end: 11 },
+                { title: 'Afternoon Program', start: 11, end: 14 },
+                { title: 'Matinee Show', start: 14, end: 17 },
+                { title: 'Evening Entertainment', start: 17, end: 19 },
+                { title: 'Prime Time Special', start: 19, end: 21 },
+                { title: 'Late Night Show', start: 21, end: 24 }
+            ];
+        }
+
+        // Format time helper
+        function formatTime(hour) {
+            return hour.toString().padStart(2, '0');
+        }
+
+        // Play Channel
+        async function playChannel(channelId) {
+            const channel = state.channels.find(c => c.id === channelId);
+            if (!channel) return;
+
+            console.log('▶️ Playing:', channel.name);
+
+            // Update state
+            state.currentChannel = channel;
+
+            // Update UI
+            const logoHtml = channel.logo ?
+                `<img src="${escapeHtml(channel.logo)}" alt="${escapeHtml(channel.name)}" class="channel-logo" onerror="this.style.display='none'">` :
+                '';
+
+            elements.nowPlayingChannel.innerHTML = `
+                ${logoHtml}
+                ${escapeHtml(channel.name)}
+                <span class="live-badge">
+                    <span class="live-dot"></span>
+                    LIVE
+                </span>
+            `;
+            elements.videoPlaceholder.classList.add('hidden');
+            renderChannels();
+
+            // Update EPG display
+            updateEPGDisplay();
+
+            // Start EPG auto-update
+            if (state.epgUpdateInterval) {
+                clearInterval(state.epgUpdateInterval);
+            }
+            state.epgUpdateInterval = setInterval(updateEPGDisplay, CONFIG.EPG_UPDATE_INTERVAL);
+
+            // Close channel sheet on mobile
+            if (window.innerWidth < 768) {
+                closeChannelSheet();
+            }
+
+            // Show loading
+            showLoading(true);
+            elements.bufferStatus.textContent = 'Loading...';
+
+            // Cleanup previous HLS instance
+            if (state.hls) {
+                state.hls.destroy();
+                state.hls = null;
+            }
+
+            try {
+                // Play with HLS.js
+                if (Hls.isSupported()) {
+                    state.hls = new Hls({
+                        enableWorker: true,
+                        lowLatencyMode: true,
+                        backBufferLength: 90
+                    });
+
+                    state.hls.loadSource(channel.url);
+                    state.hls.attachMedia(elements.video);
+
+                    state.hls.on(Hls.Events.MANIFEST_PARSED, () => {
+                        console.log('✅ Manifest parsed, starting playback');
+                        elements.video.play().catch(err => {
+                            console.error('❌ Autoplay failed:', err);
+                            showError('Click play button to start');
+                        });
+                    });
+
+                    state.hls.on(Hls.Events.ERROR, (event, data) => {
+                        console.error('❌ HLS Error:', data);
+                        if (data.fatal) {
+                            handleHLSError(data);
+                        }
+                    });
+
+                } else if (elements.video.canPlayType('application/vnd.apple.mpegurl')) {
+                    // Native HLS support (Safari)
+                    elements.video.src = channel.url;
+                    await elements.video.play();
+                } else {
+                    throw new Error('HLS not supported in this browser');
+                }
+
+            } catch (error) {
+                console.error('❌ Playback error:', error);
+                showError(`Failed to play: ${error.message}`);
+                showLoading(false);
+                elements.bufferStatus.textContent = 'Error';
+            }
+        }
+
+        // Handle HLS Errors
+        function handleHLSError(data) {
+            switch (data.type) {
+                case Hls.ErrorTypes.NETWORK_ERROR:
+                    showError('Network error - Check your connection');
+                    state.hls.startLoad();
+                    break;
+                case Hls.ErrorTypes.MEDIA_ERROR:
+                    showError('Media error - Trying to recover...');
+                    state.hls.recoverMediaError();
+                    break;
+                default:
+                    showError('Playback error - Try another channel');
+                    state.hls.destroy();
+                    state.hls = null;
+                    break;
+            }
+            showLoading(false);
+            elements.bufferStatus.textContent = 'Error';
+        }
+
+        // Video Event Listeners
+        function setupVideoListeners() {
+            elements.video.addEventListener('loadstart', () => {
+                console.log('📥 Loading video...');
+                showLoading(true);
+            });
+
+            elements.video.addEventListener('canplay', () => {
+                console.log('✅ Video ready to play');
+                showLoading(false);
+                elements.bufferStatus.textContent = 'Playing';
+            });
+
+            elements.video.addEventListener('playing', () => {
+                console.log('▶️ Video playing');
+                showLoading(false);
+                elements.bufferStatus.textContent = 'Playing';
+            });
+
+            elements.video.addEventListener('waiting', () => {
+                console.log('⏳ Buffering...');
+                showLoading(true);
+                elements.bufferStatus.textContent = 'Buffering...';
+            });
+
+            elements.video.addEventListener('error', (e) => {
+                console.error('❌ Video error:', e);
+                showError('Video playback failed');
+                showLoading(false);
+                elements.bufferStatus.textContent = 'Error';
+            });
+        }
+
+        // UI Helpers
+        function openChannelSheet() {
+            elements.channelSheet.classList.add('active');
+            elements.channelSheetOverlay.classList.add('active');
+            document.body.style.overflow = 'hidden';
+        }
+
+        function closeChannelSheet() {
+            if (window.innerWidth >= 768) return;
+
+            elements.channelSheet.classList.remove('active');
+            elements.channelSheetOverlay.classList.remove('active');
+            document.body.style.overflow = '';
+        }
+
+        function showLoading(show) {
+            state.isLoading = show;
+            if (show) {
+                elements.loadingSpinner.classList.remove('hidden');
+            } else {
+                elements.loadingSpinner.classList.add('hidden');
+            }
+        }
+
+        function showError(message) {
+            elements.errorText.textContent = message;
+            elements.errorMessage.classList.remove('hidden');
+
+            setTimeout(() => {
+                elements.errorMessage.classList.add('hidden');
+            }, CONFIG.ERROR_TIMEOUT);
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            if (window.innerWidth >= 768) {
+                elements.channelSheet.classList.add('active');
+                elements.channelSheetOverlay.classList.remove('active');
+                document.body.style.overflow = '';
+            }
+        });
+
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', () => {
+            if (state.epgUpdateInterval) {
+                clearInterval(state.epgUpdateInterval);
+            }
+            if (state.hls) {
+                state.hls.destroy();
+            }
+        });
+
+        // Start the app
+        init();
+    </script>
+</body>
+</html>
