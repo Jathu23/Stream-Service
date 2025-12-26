@@ -75,10 +75,26 @@ namespace Stream_Service.Controllers
         [ProducesResponseType(StatusCodes.Status404NotFound)]
         public async Task GetRewindStream(string stationId, [FromQuery] int seconds)
         {
-            if (seconds < 0 || seconds > 3600)
+            // Get station configuration to check its recording hours limit
+            var stations = _configuration.GetSection("Stations").Get<List<Station>>() ?? new List<Station>();
+            var station = stations.FirstOrDefault(s => s.Id == stationId);
+
+            if (station == null)
+            {
+                Response.StatusCode = 404;
+                await Response.WriteAsync($"Station '{stationId}' not found");
+                return;
+            }
+
+            // Calculate max allowed seconds based on station's recording hours
+            var maxSeconds = station.RecordingHours * 3600;
+
+            if (seconds < 0 || seconds > maxSeconds)
             {
                 Response.StatusCode = 400;
-                await Response.WriteAsync("Seconds must be between 0 and 3600 (1 hour)");
+                await Response.WriteAsync($"Seconds must be between 0 and {maxSeconds} ({station.RecordingHours} hour(s))");
+                _logger.LogWarning("Invalid rewind seconds {Seconds} for station {StationId}. Max allowed: {MaxSeconds}",
+                    seconds, stationId, maxSeconds);
                 return;
             }
 
@@ -120,7 +136,8 @@ namespace Stream_Service.Controllers
                 s.Id,
                 s.Name,
                 s.Icon,
-                s.Gradient
+                s.Gradient,
+                s.RecordingHours
             }));
         }
 

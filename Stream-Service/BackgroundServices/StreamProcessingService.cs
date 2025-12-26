@@ -18,6 +18,10 @@ namespace Stream_Service.BackgroundServices
         private readonly ILogger<StreamProcessingService> _logger;
         private readonly StreamBufferManager _bufferManager;
         private readonly int _chunkSize = 64 * 1024; // 64KB chunks
+        private static readonly HttpClient _httpClient = new HttpClient
+        {
+            Timeout = TimeSpan.FromMinutes(10) // Long timeout for streaming
+        };
 
         public StreamProcessingService(IConfiguration config, ILogger<StreamProcessingService> logger, StreamBufferManager bufferManager)
         {
@@ -52,11 +56,9 @@ namespace Stream_Service.BackgroundServices
             {
                 try
                 {
-                    using var client = new HttpClient();
-                    client.Timeout = TimeSpan.FromMinutes(10); // Long timeout for streaming
-
+                    // ✅ Use static HttpClient - prevents socket exhaustion
                     // Get the stream
-                    using var stream = await client.GetStreamAsync(station.Url, stoppingToken);
+                    using var stream = await _httpClient.GetStreamAsync(station.Url, stoppingToken);
                     _logger.LogInformation("Connected to stream for {StationId}", station.Id);
 
                     var buffer = new byte[_chunkSize];

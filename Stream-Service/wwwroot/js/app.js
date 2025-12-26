@@ -21,7 +21,9 @@ const state = {
     seekPosition: 0,
     isDragging: false,
     isLive: true,
-    playbackStartTime: null
+    playbackStartTime: null,
+    seekedSecondsFromLive: 0,  // How many seconds from live when we seeked
+    maxBufferDuration: 3600    // Maximum buffer duration in seconds (will be set per station)
 };
 
 // DOM Elements
@@ -38,10 +40,16 @@ const elements = {
     progressHandle: null,
     progressTooltip: null,
     liveIndicator: null,
+    btnGoLive: null,
     statusGrid: null,
     stationBtns: null,
     canvas: null,
-    canvasCtx: null
+    canvasCtx: null,
+    fullscreenCanvas: null,
+    fullscreenCanvasCtx: null,
+    fullscreenVisualizer: null,
+    fullscreenStation: null,
+    fullscreenTitle: null
 };
 
 // Web Audio API
@@ -51,6 +59,11 @@ let source = null;
 let dataArray = null;
 let bufferLength = 0;
 let animationId = null;
+let fullscreenAnimationId = null;
+
+// UI State
+let isMinimalMode = false;
+let isFullscreenVisualizer = false;
 
 // Initialize
 document.addEventListener('DOMContentLoaded', async () => {
@@ -66,9 +79,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     elements.progressHandle = document.getElementById('progressHandle');
     elements.progressTooltip = document.getElementById('progressTooltip');
     elements.liveIndicator = document.getElementById('liveIndicator');
+    elements.btnGoLive = document.getElementById('btnGoLive');
     elements.statusGrid = document.getElementById('statusGrid');
     elements.canvas = document.getElementById('visualizerCanvas');
     elements.canvasCtx = elements.canvas.getContext('2d');
+    elements.fullscreenCanvas = document.getElementById('fullscreenCanvas');
+    elements.fullscreenCanvasCtx = elements.fullscreenCanvas ? elements.fullscreenCanvas.getContext('2d') : null;
+    elements.fullscreenVisualizer = document.getElementById('fullscreenVisualizer');
+    elements.fullscreenStation = document.getElementById('fullscreenStation');
+    elements.fullscreenTitle = document.getElementById('fullscreenTitle');
+    elements.toastContainer = document.getElementById('toastContainer');
+    elements.helpModal = document.getElementById('helpModal');
 
     // Set canvas size dynamically based on screen size
     resizeCanvas();
@@ -104,7 +125,8 @@ async function loadStations() {
             CONFIG.STATIONS[station.id] = {
                 name: station.name,
                 icon: station.icon,
-                gradient: station.gradient
+                gradient: station.gradient,
+                recordingHours: station.recordingHours || 1  // Default to 1 hour if not specified
             };
         });
 
@@ -120,18 +142,22 @@ async function loadStations() {
 
 // Render station buttons dynamically
 function renderStationButtons(stations) {
-    const stationGrid = document.querySelector('.station-grid');
-    if (!stationGrid) return;
+    const stationsList = document.getElementById('stationsList');
+    if (!stationsList) return;
 
-    stationGrid.innerHTML = stations.map(station => `
-        <button class="station-btn" data-station="${station.id}">
+    // Mobile-first design with station cards
+    stationsList.innerHTML = stations.map(station => `
+        <button class="station-card" data-station="${station.id}">
             <div class="station-icon">${station.icon}</div>
-            <div>${station.name}</div>
+            <div class="station-info">
+                <div class="station-name">${station.name}</div>
+                <div class="station-meta">${station.recordingHours}h buffer • Live FM</div>
+            </div>
         </button>
     `).join('');
 
     // Setup event listeners for station buttons
-    elements.stationBtns = document.querySelectorAll('.station-btn');
+    elements.stationBtns = document.querySelectorAll('.station-card');
     elements.stationBtns.forEach(btn => {
         btn.addEventListener('click', () => selectStation(btn.dataset.station));
     });
@@ -190,6 +216,11 @@ function selectStation(stationId) {
     state.currentStation = stationId;
     const station = CONFIG.STATIONS[stationId];
 
+    // Set maximum buffer duration for this station
+    state.maxBufferDuration = station.recordingHours * 3600; // Convert hours to seconds
+
+    console.log('📡 Station:', station.name, '| Max buffer:', station.recordingHours, 'hours (', state.maxBufferDuration, 'seconds)');
+
     // Update station buttons
     elements.stationBtns.forEach(btn => {
         btn.classList.toggle('active', btn.dataset.station === stationId);
@@ -203,11 +234,14 @@ function selectStation(stationId) {
     elements.nowPlaying.textContent = station.name;
     elements.nowPlayingStation.textContent = 'Ready to play';
 
+    // Show toast notification
+    showToast(`📻 ${station.name} - ${station.recordingHours}h buffer`, 'success');
+
     // Refresh status
     refreshStatus();
     startAutoRefresh();
 
-    console.log('📡 Selected:', station.name);
+    console.log('✅ Selected:', station.name);
 }
 
 // Previous station
@@ -245,7 +279,7 @@ function nextStation() {
 // Playback Controls
 function playLive() {
     if (!state.currentStation) {
-        alert('Please select a station first!');
+        showToast('⚠️ Please select a station first!', 'warning');
         return;
     }
 
@@ -265,6 +299,8 @@ function playLive() {
     elements.audio.src = url;
     elements.audio.play()
         .then(() => {
+            state.isPlaying = true;
+
             // Update play button
             elements.playButton.textContent = '⏸️';
             elements.playButton.onclick = pauseStream;
@@ -278,11 +314,19 @@ function playLive() {
                 elements.liveIndicator.style.display = 'inline-block';
             }
 
+            // Hide album overlay - show playing
+            if (elements.albumArt) {
+                elements.albumArt.classList.add('playing');
+            }
+
+            // Show success toast
+            showToast(`▶️ ${station.name} LIVE`, 'success');
+
             console.log('▶️ Playing:', url);
         })
         .catch(err => {
             console.error('Play error:', err);
-            alert('Failed to play stream');
+            showToast('❌ Failed to play - Check connection', 'error');
         });
 }
 
@@ -295,25 +339,37 @@ function pauseStream() {
     elements.playButton.onclick = playLive;
 
     elements.nowPlayingStation.textContent = 'Paused';
+
+    // Show album overlay when paused
+    if (elements.albumArt) {
+        elements.albumArt.classList.remove('playing');
+    }
+
+    // Show toast
+    showToast('⏸️ Paused', 'info');
 }
 
 function skipForward() {
     if (!state.currentStation) {
-        alert('Please select a station first!');
+        showToast('⚠️ Select a station first', 'warning');
         return;
     }
     // Skip forward means go back to live
+    showToast('⏩ Going LIVE', 'info');
     playLive();
 }
 
 function rewind(seconds) {
     if (!state.currentStation) {
-        alert('Please select a station first!');
+        showToast('⚠️ Select a station first', 'warning');
         return;
     }
 
-    const station = CONFIG.STATIONS[state.currentStation];
     const minutes = Math.floor(seconds / 60);
+    const timeText = minutes > 0 ? `${minutes}m` : `${seconds}s`;
+    showToast(`⏪ ${timeText} ago`, 'info');
+
+    const station = CONFIG.STATIONS[state.currentStation];
     const url = `${CONFIG.API_BASE}/rewind/${state.currentStation}?seconds=${seconds}`;
 
     elements.audio.src = url;
@@ -385,14 +441,23 @@ function stopProgressAnimation() {
 
 function updateDuration() {
     if (state.bufferDuration > 0) {
-        const minutes = Math.floor(state.bufferDuration / 60);
-        const seconds = Math.floor(state.bufferDuration % 60);
+        // Use effective buffer duration (capped by station's recording hours)
+        const effectiveBufferDuration = Math.min(state.bufferDuration, state.maxBufferDuration);
+
+        const minutes = Math.floor(effectiveBufferDuration / 60);
+        const seconds = Math.floor(effectiveBufferDuration % 60);
         elements.duration.textContent = `${minutes}:${seconds.toString().padStart(2, '0')}`;
 
         // Update seekbar max position
         if (elements.progressBar) {
-            elements.progressBar.setAttribute('data-duration', state.bufferDuration);
+            elements.progressBar.setAttribute('data-duration', effectiveBufferDuration);
         }
+
+        // Log buffer info
+        const station = state.currentStation ? CONFIG.STATIONS[state.currentStation] : null;
+        const maxHours = station ? station.recordingHours : 1;
+        const actualMinutes = Math.floor(state.bufferDuration / 60);
+        console.log(`📊 Effective buffer: ${minutes}m ${seconds}s | Actual buffer: ${actualMinutes}m | Station max: ${maxHours}h`);
     } else {
         elements.duration.textContent = '--:--';
     }
@@ -769,18 +834,40 @@ function setupSeekbar() {
         const x = (e.type.includes('touch') ? e.touches[0].clientX : e.clientX) - rect.left;
         const percent = Math.max(0, Math.min(1, x / rect.width));
 
-        state.seekPosition = percent * state.bufferDuration;
+        // Use the SMALLER of bufferDuration and maxBufferDuration
+        // This ensures seekbar doesn't go beyond station's recording limit
+        const effectiveBufferDuration = Math.min(state.bufferDuration, state.maxBufferDuration);
+
+        // Calculate position in buffer (0 = oldest, effectiveBufferDuration = live)
+        state.seekPosition = percent * effectiveBufferDuration;
 
         // Update UI
         const position = percent * 100;
         elements.progressFill.style.width = `${position}%`;
         elements.progressHandle.style.left = `${position}%`;
 
-        // Update tooltip
-        const timeText = formatTimeFromSeconds(state.seekPosition);
-        const isAtLive = state.seekPosition >= state.bufferDuration - 5;
-        elements.progressTooltip.textContent = isAtLive ? 'LIVE' : `${timeText} ago`;
-        elements.progressTooltip.style.left = `${position}%`;
+        // Update tooltip - show how far from live
+        const secondsFromLive = effectiveBufferDuration - state.seekPosition;
+        const isAtLive = secondsFromLive < 5;
+
+        // Show tooltip
+        if (elements.progressTooltip) {
+            elements.progressTooltip.style.display = 'block';
+
+            if (isAtLive) {
+                elements.progressTooltip.textContent = 'LIVE';
+            } else {
+                const minutesAgo = Math.floor(secondsFromLive / 60);
+                const secondsAgo = Math.floor(secondsFromLive % 60);
+                if (minutesAgo > 0) {
+                    elements.progressTooltip.textContent = `${minutesAgo}:${secondsAgo.toString().padStart(2, '0')} ago`;
+                } else {
+                    elements.progressTooltip.textContent = `${secondsAgo}s ago`;
+                }
+            }
+        }
+
+        console.log('🎯 Seek position:', formatTimeFromSeconds(state.seekPosition), '| From live:', Math.floor(secondsFromLive) + 's');
     }
 
     // Click to seek
@@ -789,7 +876,11 @@ function setupSeekbar() {
             const rect = elements.progressBar.getBoundingClientRect();
             const x = e.clientX - rect.left;
             const percent = Math.max(0, Math.min(1, x / rect.width));
-            state.seekPosition = percent * state.bufferDuration;
+
+            // Use effective buffer duration (limited by station's max)
+            const effectiveBufferDuration = Math.min(state.bufferDuration, state.maxBufferDuration);
+            state.seekPosition = percent * effectiveBufferDuration;
+
             seekToPosition(state.seekPosition);
         }
     });
@@ -797,49 +888,144 @@ function setupSeekbar() {
 
 // Seek to specific position
 function seekToPosition(seconds) {
-    if (!state.currentStation || state.bufferDuration === 0) return;
-
-    // Calculate how far back from live
-    const secondsFromLive = state.bufferDuration - seconds;
-
-    // If within 5 seconds of live, play live
-    if (secondsFromLive < 5) {
-        playLive();
-        state.isLive = true;
-        elements.liveIndicator.style.display = 'inline-block';
-        state.currentTime = state.bufferDuration;
-    } else {
-        // Play from that position
-        state.isLive = false;
-        elements.liveIndicator.style.display = 'none';
-        state.currentTime = seconds;
-        state.playbackStartTime = Date.now();
-
-        const station = CONFIG.STATIONS[state.currentStation];
-        const url = `${CONFIG.API_BASE}/rewind/${state.currentStation}?seconds=${Math.floor(secondsFromLive)}`;
-
-        // Initialize audio context on first play
-        if (!audioContext) {
-            initAudioContext();
-        }
-
-        elements.audio.src = url;
-        elements.audio.play()
-            .then(() => {
-                elements.playButton.textContent = '⏸️';
-                elements.playButton.onclick = pauseStream;
-                elements.nowPlaying.textContent = station.name;
-
-                const minutesAgo = Math.floor(secondsFromLive / 60);
-                elements.nowPlayingStation.innerHTML = `⏪ ${minutesAgo} min ago <span class="playing-animation"><span></span><span></span><span></span></span>`;
-
-                console.log('⏪ Seeking to:', formatTimeFromSeconds(seconds), `(${Math.floor(secondsFromLive)}s ago)`);
-            })
-            .catch(err => {
-                console.error('Seek error:', err);
-                alert('Failed to seek');
-            });
+    if (!state.currentStation) {
+        console.warn('No station selected');
+        return;
     }
+
+    if (state.bufferDuration === 0) {
+        console.warn('Buffer not ready yet');
+        return;
+    }
+
+    // Use effective buffer duration (limited by station's recording hours)
+    const effectiveBufferDuration = Math.min(state.bufferDuration, state.maxBufferDuration);
+
+    // Validate seek position (seconds is 0 to effectiveBufferDuration)
+    if (seconds < 0 || seconds > effectiveBufferDuration) {
+        console.error('❌ Invalid seek position:', seconds, '| Max allowed:', effectiveBufferDuration);
+        elements.nowPlayingStation.textContent = '⚠️ Cannot seek to that position';
+        setTimeout(() => {
+            if (state.isPlaying) {
+                const station = CONFIG.STATIONS[state.currentStation];
+                elements.nowPlayingStation.textContent = station.name;
+            }
+        }, 2000);
+        return;
+    }
+
+    // Calculate how far back from live we want to go
+    // If seconds = effectiveBufferDuration (right edge), we're at LIVE
+    // If seconds = 0 (left edge), we're at the oldest buffered time within the limit
+    const secondsFromLive = effectiveBufferDuration - seconds;
+
+    // Additional safety check: don't seek beyond actual available buffer
+    if (secondsFromLive > state.bufferDuration) {
+        console.warn('⚠️ Requested position beyond available buffer');
+        console.log('Requested seconds from live:', secondsFromLive, '| Available buffer:', state.bufferDuration);
+        // Adjust to available buffer
+        const adjustedSecondsFromLive = Math.min(secondsFromLive, state.bufferDuration);
+        console.log('Adjusting to:', adjustedSecondsFromLive, 'seconds from live');
+    }
+
+    console.log('🎯 Seek request - Position:', formatTimeFromSeconds(seconds),
+                '| Seconds from live:', secondsFromLive,
+                '| Effective buffer:', formatTimeFromSeconds(effectiveBufferDuration));
+
+    // If within 5 seconds of live, just go to live
+    if (secondsFromLive < 5) {
+        goToLive();
+        return;
+    }
+
+    // Play from that position
+    state.isLive = false;
+    if (elements.liveIndicator) {
+        elements.liveIndicator.style.display = 'none';
+    }
+
+    // Store how far from live we are (this is what matters!)
+    state.seekedSecondsFromLive = secondsFromLive;
+    state.playbackStartTime = Date.now();
+
+    // Also store the position for reference
+    state.currentTime = seconds;
+
+    const station = CONFIG.STATIONS[state.currentStation];
+    const rewindSeconds = Math.floor(secondsFromLive);
+
+    // Validate rewind seconds is within station's max buffer duration
+    if (rewindSeconds < 0 || rewindSeconds > state.maxBufferDuration) {
+        console.error('Invalid rewind seconds:', rewindSeconds, '| Max allowed:', state.maxBufferDuration);
+        return;
+    }
+
+    const url = `${CONFIG.API_BASE}/rewind/${state.currentStation}?seconds=${rewindSeconds}`;
+
+    console.log('🎯 Seeking to:', formatTimeFromSeconds(seconds), `(${rewindSeconds}s from live)`);
+
+    // Initialize audio context on first play
+    if (!audioContext) {
+        initAudioContext();
+    }
+
+    // Validate URL before loading
+    console.log('📡 Loading stream from:', url);
+
+    elements.audio.src = url;
+
+    // Add load error handler
+    const handleLoadError = () => {
+        console.error('❌ Failed to load audio stream');
+        state.isLive = true;
+        elements.nowPlayingStation.textContent = '⚠️ Seeking failed, switching to live...';
+        setTimeout(() => {
+            playLive();
+        }, 1000);
+    };
+
+    elements.audio.addEventListener('error', handleLoadError, { once: true });
+
+    elements.audio.play()
+        .then(() => {
+            state.isPlaying = true;
+            elements.playButton.textContent = '⏸️';
+            elements.playButton.onclick = pauseStream;
+            elements.nowPlaying.textContent = station.name;
+
+            const minutesAgo = Math.floor(rewindSeconds / 60);
+            const secondsAgo = rewindSeconds % 60;
+            const timeText = minutesAgo > 0
+                ? `${minutesAgo}:${secondsAgo.toString().padStart(2, '0')} ago`
+                : `${secondsAgo}s ago`;
+
+            elements.nowPlayingStation.innerHTML = `⏪ ${timeText} <span class="playing-animation"><span></span><span></span><span></span></span>`;
+
+            console.log('✅ Seek successful - Now playing from', timeText);
+        })
+        .catch(err => {
+            console.error('❌ Seek play error:', err.message || err);
+            state.isLive = true;
+
+            // Check if it's a network error or invalid seek position
+            if (err.name === 'NotSupportedError' || err.name === 'NotAllowedError') {
+                console.warn('⚠️ Audio playback not allowed or supported');
+                elements.nowPlayingStation.textContent = '⚠️ Playback error - Click play to retry';
+            } else {
+                console.warn('⚠️ Falling back to live stream');
+                elements.nowPlayingStation.textContent = '⚠️ Seek failed, switching to live...';
+                setTimeout(() => playLive(), 1000);
+            }
+        });
+}
+
+// Go to Live function
+function goToLive() {
+    if (!state.currentStation) return;
+
+    console.log('📡 Switching to LIVE');
+    showToast('🔴 LIVE', 'success');
+    playLive();
 }
 
 // Format seconds to MM:SS
@@ -853,35 +1039,307 @@ function formatTimeFromSeconds(seconds) {
 function updateSeekbarPosition() {
     if (state.isDragging || !state.isPlaying) return;
 
-    // Calculate current position
-    let currentPos;
-    if (state.isLive) {
-        // At live position
-        currentPos = state.bufferDuration;
-        elements.liveIndicator.style.display = 'inline-block';
-    } else {
-        // Calculate elapsed time since playback started
-        const elapsedSeconds = state.currentTime + ((Date.now() - state.playbackStartTime) / 1000);
-        currentPos = Math.min(elapsedSeconds, state.bufferDuration);
+    // Use effective buffer duration (limited by station's recording hours)
+    const effectiveBufferDuration = Math.min(state.bufferDuration, state.maxBufferDuration);
 
-        // Check if we've caught up to live
-        if (currentPos >= state.bufferDuration - 5) {
-            // Close to live, switch to live mode
-            state.isLive = true;
+    // Calculate current position in the buffer
+    let currentPos;
+
+    if (state.isLive) {
+        // We're at the live position - always at the right edge
+        // Use effective buffer duration (capped by recording hours)
+        currentPos = effectiveBufferDuration;
+
+        if (elements.liveIndicator) {
             elements.liveIndicator.style.display = 'inline-block';
-            currentPos = state.bufferDuration;
-        } else {
+        }
+        if (elements.btnGoLive) {
+            elements.btnGoLive.style.display = 'none';
+        }
+    } else {
+        // We're in time-shift mode - we're playing from X seconds ago
+        // The KEY insight: When we rewound to "30 seconds ago", the backend
+        // gave us a stream starting from that point. As we play, the backend
+        // stream continues forward. Meanwhile, LIVE also continues forward.
+        // So we STAY at "30 seconds from live" - we don't catch up automatically!
+
+        // When we seeked, we stored how far from live we were
+        // We stay at that distance because both playback and live advance together
+        const currentSecondsFromLive = state.seekedSecondsFromLive;
+
+        // Our position in the buffer is: effective buffer end - distance from live
+        currentPos = effectiveBufferDuration - currentSecondsFromLive;
+
+        // Make sure we don't go negative or beyond effective buffer
+        currentPos = Math.max(0, Math.min(currentPos, effectiveBufferDuration));
+
+        // Calculate how far we are from live
+        const secondsFromLive = currentSecondsFromLive;
+
+        // Show "Go to Live" button since we're not at live
+        if (elements.liveIndicator) {
             elements.liveIndicator.style.display = 'none';
+        }
+        if (elements.btnGoLive) {
+            elements.btnGoLive.style.display = 'inline-flex';
+        }
+
+        // Note: In this implementation, we DON'T automatically catch up to live
+        // because the backend stream continues at the same pace as live
+        // User must click "Go to Live" button or drag seekbar to catch up
+        // This matches the user's request: "user seeker ah move panna avar move panna
+        // time ku erra mathiri live la irunthu late ah audio keppar sudently jump akamaddar"
+    }
+
+    // Update UI with smooth transitions
+    // Calculate percentage based on effective buffer duration
+    const percent = effectiveBufferDuration > 0 ? (currentPos / effectiveBufferDuration) * 100 : 0;
+
+    if (elements.progressFill) {
+        elements.progressFill.style.width = `${percent}%`;
+    }
+    if (elements.progressHandle) {
+        elements.progressHandle.style.left = `${percent}%`;
+    }
+
+    // Update current time display
+    if (elements.currentTime) {
+        const timeText = formatTimeFromSeconds(currentPos);
+        elements.currentTime.textContent = timeText;
+    }
+}
+
+// Minimal Mode Toggle
+function toggleMinimalMode() {
+    isMinimalMode = !isMinimalMode;
+    document.body.classList.toggle('minimal-mode', isMinimalMode);
+
+    const toggleBtn = document.getElementById('btnMinimalToggle');
+    const icon = toggleBtn.querySelector('.toggle-icon');
+
+    if (isMinimalMode) {
+        icon.textContent = '🎛️';
+        console.log('📱 Minimal mode enabled');
+    } else {
+        icon.textContent = '🎵';
+        console.log('🖥️ Full mode enabled');
+    }
+}
+
+// Fullscreen Visualizer Functions
+function toggleFullscreenVisualizer() {
+    if (!state.isPlaying) {
+        alert('Please start playing a station first!');
+        return;
+    }
+
+    if (isFullscreenVisualizer) {
+        closeFullscreenVisualizer();
+    } else {
+        openFullscreenVisualizer();
+    }
+}
+
+function openFullscreenVisualizer() {
+    isFullscreenVisualizer = true;
+
+    if (elements.fullscreenVisualizer) {
+        elements.fullscreenVisualizer.style.display = 'flex';
+
+        // Update info
+        if (state.currentStation && CONFIG.STATIONS[state.currentStation]) {
+            const station = CONFIG.STATIONS[state.currentStation];
+            elements.fullscreenStation.textContent = station.name;
+            elements.fullscreenTitle.textContent = state.isLive ? 'LIVE' : 'Time-Shift Mode';
+        }
+
+        // Resize fullscreen canvas
+        resizeFullscreenCanvas();
+
+        // Start fullscreen visualizer animation
+        drawFullscreenVisualizer();
+
+        console.log('🎨 Fullscreen visualizer opened');
+    }
+}
+
+function closeFullscreenVisualizer() {
+    isFullscreenVisualizer = false;
+
+    if (elements.fullscreenVisualizer) {
+        elements.fullscreenVisualizer.style.display = 'none';
+    }
+
+    // Stop fullscreen animation
+    if (fullscreenAnimationId) {
+        cancelAnimationFrame(fullscreenAnimationId);
+        fullscreenAnimationId = null;
+    }
+
+    console.log('❌ Fullscreen visualizer closed');
+}
+
+// Resize Fullscreen Canvas
+function resizeFullscreenCanvas() {
+    if (!elements.fullscreenCanvas) return;
+
+    const width = Math.min(window.innerWidth * 0.9, 1400);
+    const height = window.innerHeight * 0.6;
+
+    elements.fullscreenCanvas.width = width;
+    elements.fullscreenCanvas.height = height;
+}
+
+// Fullscreen Visualizer Animation
+function drawFullscreenVisualizer() {
+    if (!isFullscreenVisualizer || !state.isPlaying) {
+        if (fullscreenAnimationId) {
+            cancelAnimationFrame(fullscreenAnimationId);
+            fullscreenAnimationId = null;
+        }
+        return;
+    }
+
+    fullscreenAnimationId = requestAnimationFrame(drawFullscreenVisualizer);
+
+    if (!analyser || !dataArray) return;
+
+    // Get frequency data
+    analyser.getByteFrequencyData(dataArray);
+
+    const canvas = elements.fullscreenCanvas;
+    const ctx = elements.fullscreenCanvasCtx;
+    const width = canvas.width;
+    const height = canvas.height;
+
+    // Clear canvas with fade effect
+    ctx.fillStyle = 'rgba(15, 12, 41, 0.2)';
+    ctx.fillRect(0, 0, width, height);
+
+    // Draw multiple visualizer styles for desktop
+    drawFullscreenCircularWave(ctx, width, height, dataArray, bufferLength);
+    drawFullscreenSymmetricBars(ctx, width, height, dataArray, bufferLength);
+}
+
+// Fullscreen Circular Wave Visualizer
+function drawFullscreenCircularWave(ctx, width, height, dataArray, bufferLength) {
+    const centerX = width / 2;
+    const centerY = height / 2;
+    const baseRadius = Math.min(width, height) / 4;
+    const numPoints = 128;
+
+    ctx.beginPath();
+    ctx.strokeStyle = 'rgba(29, 185, 84, 0.8)';
+    ctx.lineWidth = 3;
+
+    for (let i = 0; i < numPoints; i++) {
+        const angle = (i / numPoints) * Math.PI * 2;
+        const dataIndex = Math.floor((i / numPoints) * bufferLength);
+        const value = dataArray[dataIndex] / 255;
+        const radius = baseRadius + value * 80;
+
+        const x = centerX + Math.cos(angle) * radius;
+        const y = centerY + Math.sin(angle) * radius;
+
+        if (i === 0) {
+            ctx.moveTo(x, y);
+        } else {
+            ctx.lineTo(x, y);
         }
     }
 
-    // Update UI
-    const percent = state.bufferDuration > 0 ? (currentPos / state.bufferDuration) * 100 : 0;
-    elements.progressFill.style.width = `${percent}%`;
-    elements.progressHandle.style.left = `${percent}%`;
+    ctx.closePath();
+    ctx.stroke();
 
-    // Update current time display
-    elements.currentTime.textContent = formatTimeFromSeconds(currentPos);
+    // Add glow effect
+    ctx.shadowBlur = 20;
+    ctx.shadowColor = '#1db954';
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+}
+
+// Fullscreen Symmetric Bars
+function drawFullscreenSymmetricBars(ctx, width, height, dataArray, bufferLength) {
+    const numBars = 150; // More bars for desktop
+    const barWidth = width / numBars;
+    const maxBarHeight = height * 0.4;
+
+    for (let i = 0; i < numBars; i++) {
+        const dataIndex = Math.floor((i / numBars) * bufferLength);
+        const nextDataIndex = Math.min(dataIndex + 1, bufferLength - 1);
+        const fraction = ((i / numBars) * bufferLength) - dataIndex;
+
+        const value1 = dataArray[dataIndex] / 255;
+        const value2 = dataArray[nextDataIndex] / 255;
+        const interpolatedValue = value1 + (value2 - value1) * fraction;
+
+        const barHeight = Math.max(4, interpolatedValue * maxBarHeight);
+
+        const centerY = height / 2;
+        const x = i * barWidth;
+
+        // Rainbow gradient effect
+        const hue = (i / numBars) * 360;
+        const gradient = ctx.createLinearGradient(0, centerY - barHeight, 0, centerY + barHeight);
+        gradient.addColorStop(0, `hsla(${hue}, 80%, 60%, 0.8)`);
+        gradient.addColorStop(0.5, `hsla(${hue + 30}, 80%, 65%, 0.9)`);
+        gradient.addColorStop(1, `hsla(${hue}, 80%, 60%, 0.8)`);
+
+        ctx.fillStyle = gradient;
+
+        const barSpacing = 2;
+        const barActualWidth = barWidth - barSpacing;
+
+        // Draw symmetric bars
+        ctx.fillRect(x, centerY - barHeight, barActualWidth, barHeight);
+        ctx.fillRect(x, centerY, barActualWidth, barHeight);
+
+        // Add glow
+        ctx.shadowBlur = 10;
+        ctx.shadowColor = `hsla(${hue}, 80%, 60%, 0.6)`;
+    }
+
+    ctx.shadowBlur = 0;
+}
+
+// Help Modal Toggle
+function toggleHelp() {
+    const helpModal = elements.helpModal || document.getElementById('helpModal');
+    if (helpModal) {
+        const isVisible = helpModal.style.display !== 'none';
+        helpModal.style.display = isVisible ? 'none' : 'flex';
+    }
+}
+
+// Toast Notification System
+function showToast(message, type = 'info') {
+    if (!elements.toastContainer) return;
+
+    const icons = {
+        success: '✅',
+        error: '❌',
+        info: 'ℹ️',
+        warning: '⚠️'
+    };
+
+    const toast = document.createElement('div');
+    toast.className = `toast ${type}`;
+    toast.innerHTML = `
+        <div class="toast-icon">${icons[type] || icons.info}</div>
+        <div class="toast-content">
+            <p class="toast-message">${message}</p>
+        </div>
+    `;
+
+    elements.toastContainer.appendChild(toast);
+
+    // Auto-remove after 4 seconds
+    setTimeout(() => {
+        toast.classList.add('hiding');
+        setTimeout(() => {
+            toast.remove();
+        }, 300);
+    }, 4000);
 }
 
 // Export functions for HTML onclick
@@ -893,5 +1351,11 @@ window.stopStream = stopStream;
 window.refreshStatus = refreshStatus;
 window.previousStation = previousStation;
 window.nextStation = nextStation;
+window.goToLive = goToLive;
+window.toggleMinimalMode = toggleMinimalMode;
+window.toggleFullscreenVisualizer = toggleFullscreenVisualizer;
+window.closeFullscreenVisualizer = closeFullscreenVisualizer;
+window.toggleHelp = toggleHelp;
+window.showToast = showToast;
 
 console.log('✅ App loaded - Real-time audio visualizer ready');

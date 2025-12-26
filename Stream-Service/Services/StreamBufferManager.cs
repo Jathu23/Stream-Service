@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
 namespace Stream_Service.Services
@@ -10,21 +11,29 @@ namespace Stream_Service.Services
     public class StreamBufferManager
     {
         private readonly ConcurrentDictionary<string, CircularAudioBuffer> _buffers = new();
-        private readonly TimeSpan _bufferDuration = TimeSpan.FromHours(1);
         private readonly ILogger<StreamBufferManager>? _logger;
+        private readonly IConfiguration _configuration;
 
-        public StreamBufferManager(ILogger<StreamBufferManager>? logger = null)
+        public StreamBufferManager(IConfiguration configuration, ILogger<StreamBufferManager>? logger = null)
         {
+            _configuration = configuration;
             _logger = logger;
             InitializeBuffers();
         }
 
         private void InitializeBuffers()
         {
-            var stations = new[] { "mbc", "lotus", "vasanthamfm" };
-            foreach (var stationId in stations)
+            // Load stations from configuration to get their specific recording hours
+            var stations = _configuration.GetSection("Stations").Get<List<Models.Station>>() ?? new List<Models.Station>();
+
+            foreach (var station in stations.Where(s => s.IsActive))
             {
-                _buffers.TryAdd(stationId, new CircularAudioBuffer(_bufferDuration, _logger));
+                // Use station-specific recording hours
+                var bufferDuration = TimeSpan.FromHours(station.RecordingHours);
+                _buffers.TryAdd(station.Id, new CircularAudioBuffer(bufferDuration, _logger));
+
+                _logger?.LogInformation("Initialized buffer for station {StationId} with {Hours} hour(s) capacity",
+                    station.Id, station.RecordingHours);
             }
         }
 
@@ -77,6 +86,7 @@ namespace Stream_Service.Services
         private readonly ILogger? _logger;
         private long _totalBytesAdded = 0;
         private int _totalChunksAdded = 0;
+        private long _currentBufferBytes = 0; // ✅ Cache to avoid Sum() on every status call
 
         public CircularAudioBuffer(TimeSpan maxDuration, ILogger? logger = null)
         {
@@ -100,18 +110,24 @@ namespace Stream_Service.Services
                 _chunks.AddLast(chunk);
                 _totalBytesAdded += data.Length;
                 _totalChunksAdded++;
+                _currentBufferBytes += data.Length; // ✅ Update cache
 
-                // Remove old chunks beyond 1 hour
+                // Remove old chunks beyond station's max duration
                 // IMPORTANT: Calculate cutoff time BEFORE adding the new chunk's timestamp
                 // to avoid race conditions where we might remove chunks we just added
                 var cutoffTime = chunk.Timestamp - _maxDuration;
                 int removedCount = 0;
+                long removedBytes = 0;
 
                 while (_chunks.Count > 1 && _chunks.First!.Value.Timestamp < cutoffTime)
                 {
+                    var removedChunk = _chunks.First.Value;
+                    removedBytes += removedChunk.Data.Length;
                     _chunks.RemoveFirst();
                     removedCount++;
                 }
+
+                _currentBufferBytes -= removedBytes; // ✅ Update cache
 
                 if (removedCount > 0)
                 {
@@ -186,7 +202,7 @@ namespace Stream_Service.Services
                 return new BufferStatus
                 {
                     ChunkCount = _chunks.Count,
-                    TotalBytes = _chunks.Sum(c => c.Data.Length),
+                    TotalBytes = _currentBufferBytes, // ✅ Use cached value instead of Sum()
                     OldestChunkTime = firstChunk?.Timestamp,
                     LatestChunkTime = lastChunk?.Timestamp,
                     BufferDuration = bufferDuration,

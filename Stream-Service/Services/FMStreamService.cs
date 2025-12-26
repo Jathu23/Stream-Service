@@ -23,7 +23,7 @@ namespace Stream_Service.Services
             _logger = logger;
         }
 
-        public async IAsyncEnumerable<byte[]> GetLiveStreamAsync(string stationId)
+        public async IAsyncEnumerable<byte[]> GetLiveStreamAsync(string stationId, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             _logger.LogInformation("Starting live stream for {StationId}", stationId);
 
@@ -48,13 +48,19 @@ namespace Stream_Service.Services
             // Stream initial buffered chunks
             foreach (var chunk in recentChunks)
             {
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    _logger.LogInformation("Live stream cancelled for {StationId}", stationId);
+                    yield break;
+                }
+
                 yield return chunk.Data;
-                await Task.Delay(CalculateChunkDelay(chunk.Data.Length));
+                await Task.Delay(CalculateChunkDelay(chunk.Data.Length), cancellationToken);
             }
 
             // Continue streaming new chunks as they arrive
             var lastChunkTime = recentChunks.Last().Timestamp;
-            while (true)
+            while (!cancellationToken.IsCancellationRequested)
             {
                 var newChunks = _bufferManager.GetChunksFrom(stationId, lastChunkTime.AddMilliseconds(1));
 
@@ -62,20 +68,28 @@ namespace Stream_Service.Services
                 {
                     foreach (var chunk in newChunks)
                     {
+                        if (cancellationToken.IsCancellationRequested)
+                        {
+                            _logger.LogInformation("Live stream cancelled for {StationId}", stationId);
+                            yield break;
+                        }
+
                         yield return chunk.Data;
                         lastChunkTime = chunk.Timestamp;
-                        await Task.Delay(CalculateChunkDelay(chunk.Data.Length));
+                        await Task.Delay(CalculateChunkDelay(chunk.Data.Length), cancellationToken);
                     }
                 }
                 else
                 {
                     // No new chunks yet, wait a bit
-                    await Task.Delay(100);
+                    await Task.Delay(100, cancellationToken);
                 }
             }
+
+            _logger.LogInformation("Live stream ended for {StationId}", stationId);
         }
 
-        public async IAsyncEnumerable<byte[]> GetBufferedStreamAsync(string stationId, DateTime startTimestamp)
+        public async IAsyncEnumerable<byte[]> GetBufferedStreamAsync(string stationId, DateTime startTimestamp, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             _logger.LogInformation("Starting buffered stream for {StationId} from {StartTime}", stationId, startTimestamp);
 
@@ -91,15 +105,21 @@ namespace Stream_Service.Services
             // Stream all buffered chunks from the requested time
             foreach (var chunk in chunks)
             {
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    _logger.LogInformation("Buffered stream cancelled for {StationId}", stationId);
+                    yield break;
+                }
+
                 yield return chunk.Data;
-                await Task.Delay(CalculateChunkDelay(chunk.Data.Length));
+                await Task.Delay(CalculateChunkDelay(chunk.Data.Length), cancellationToken);
             }
 
             // Once we catch up to live, continue with live streaming
             var lastChunkTime = chunks.Last().Timestamp;
             _logger.LogInformation("Caught up to live stream for {StationId}, continuing with live data", stationId);
 
-            while (true)
+            while (!cancellationToken.IsCancellationRequested)
             {
                 var newChunks = _bufferManager.GetChunksFrom(stationId, lastChunkTime.AddMilliseconds(1));
 
@@ -107,16 +127,24 @@ namespace Stream_Service.Services
                 {
                     foreach (var chunk in newChunks)
                     {
+                        if (cancellationToken.IsCancellationRequested)
+                        {
+                            _logger.LogInformation("Buffered stream cancelled for {StationId}", stationId);
+                            yield break;
+                        }
+
                         yield return chunk.Data;
                         lastChunkTime = chunk.Timestamp;
-                        await Task.Delay(CalculateChunkDelay(chunk.Data.Length));
+                        await Task.Delay(CalculateChunkDelay(chunk.Data.Length), cancellationToken);
                     }
                 }
                 else
                 {
-                    await Task.Delay(100);
+                    await Task.Delay(100, cancellationToken);
                 }
             }
+
+            _logger.LogInformation("Buffered stream ended for {StationId}", stationId);
         }
 
         public async Task UpdateStationAsync(string stationId, string url)

@@ -7,6 +7,7 @@
         public string Url { get; set; } = string.Empty;
         public string Icon { get; set; } = string.Empty;
         public string Gradient { get; set; } = string.Empty;
+        public int RecordingHours { get; set; } = 1;
         public bool IsActive { get; set; }
     }
 }
