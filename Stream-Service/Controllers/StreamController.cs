@@ -180,22 +180,50 @@ namespace Stream_Service.Controllers
         public IActionResult GetAllStatus()
         {
             var stationIds = _bufferManager.GetAllStationIds();
-            var allStatus = stationIds.Select(id => new
-            {
-                stationId = id,
-                status = _bufferManager.GetBufferStatus(id)
+            var stations = _configuration.GetSection("Stations").Get<List<Station>>() ?? new List<Station>();
+
+            var allStatus = stationIds.Select(id => {
+                var status = _bufferManager.GetBufferStatus(id);
+                var station = stations.FirstOrDefault(s => s.Id == id);
+
+                // Calculate time since last chunk
+                var timeSinceLastChunkSeconds = status.LatestChunkTime.HasValue
+                    ? (DateTime.UtcNow - status.LatestChunkTime.Value).TotalSeconds
+                    : -1;
+
+                // Human-readable buffer duration
+                var bufferMinutes = (int)status.BufferDuration.TotalMinutes;
+                var bufferSeconds = (int)status.BufferDuration.TotalSeconds % 60;
+                var bufferDurationText = bufferMinutes > 0
+                    ? $"{bufferMinutes}m {bufferSeconds}s"
+                    : $"{bufferSeconds}s";
+
+                // Human-readable health status
+                var healthStatus = status.ChunkCount == 0 ? "Not Recording" :
+                    timeSinceLastChunkSeconds > 10 ? "Delayed" : "Healthy";
+
+                // Human-readable timestamps (Local time)
+                var oldestChunkText = status.OldestChunkTime.HasValue
+                    ? status.OldestChunkTime.Value.ToLocalTime().ToString("MMM dd, hh:mm:ss tt")
+                    : "N/A";
+
+                var latestChunkText = status.LatestChunkTime.HasValue
+                    ? status.LatestChunkTime.Value.ToLocalTime().ToString("MMM dd, hh:mm:ss tt")
+                    : "N/A";
+
+                return new
+                {
+                    stationName = station?.Name ?? "Unknown",
+                    chunkCount = status.ChunkCount,
+                    totalMB = Math.Round(status.TotalBytes / 1024.0 / 1024.0, 2),
+                    bufferDuration = bufferDurationText,
+                    healthStatus = healthStatus,
+                    oldestChunk = oldestChunkText,
+                    latestChunk = latestChunkText
+                };
             }).ToList();
 
-            return Ok(allStatus.Select(s => new
-            {
-                s.stationId,
-                chunkCount = s.status.ChunkCount,
-                totalMB = Math.Round(s.status.TotalBytes / 1024.0 / 1024.0, 2),
-                bufferDurationMinutes = Math.Round(s.status.BufferDuration.TotalMinutes, 2),
-                oldestChunkTime = s.status.OldestChunkTime,
-                latestChunkTime = s.status.LatestChunkTime,
-                isRecording = s.status.ChunkCount > 0
-            }));
+            return Ok(allStatus);
         }
 
         /// <summary>
